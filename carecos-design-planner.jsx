@@ -5,18 +5,27 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 const STORAGE_KEY = "careco-planner-v1";
 
 function loadInitialState() {
-  // 1. Shared URL hash takes priority (colleague opened a share link)
+  const migrate = (state) => {
+    if (state?.topics) {
+      state.topics = state.topics.map((t) => ({
+        ...t,
+        devStartDate: t.devStartDate || t.startDate || "2026-04-30",
+        status:      t.status       !== undefined ? t.status : "Unassigned",
+        description: t.description  !== undefined ? t.description : "",
+      }));
+    }
+    return state;
+  };
   try {
     const hash = window.location.hash.slice(1);
     if (hash) {
-      const state = JSON.parse(atob(hash));
+      const state = migrate(JSON.parse(atob(hash)));
       if (state?.topics) return state;
     }
   } catch {}
-  // 2. Fall back to localStorage (own saved session)
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) return JSON.parse(saved);
+    if (saved) return migrate(JSON.parse(saved));
   } catch {}
   return null;
 }
@@ -24,20 +33,54 @@ function loadInitialState() {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const SIZES = {
-  XS: { days: 1,  hours: "0–4h",  weeks: 0.2, color: "#059669" },
-  S:  { days: 3,  hours: "12h",   weeks: 0.6, color: "#2563EB" },
-  M:  { days: 5,  hours: "20h",   weeks: 1,   color: "#D97706" },
-  L:  { days: 10, hours: "40h",   weeks: 2,   color: "#EA580C" },
-  XL: { days: 20, hours: "80h+",  weeks: 4,   color: "#DC2626" },
+  XS:  { days: 1,  hours: "0–4h",   weeks: 0.2, color: "#059669" },
+  S:   { days: 3,  hours: "12h",    weeks: 0.6, color: "#2563EB" },
+  M:   { days: 5,  hours: "20h",    weeks: 1,   color: "#D97706" },
+  L:   { days: 10, hours: "40h",    weeks: 2,   color: "#EA580C" },
+  XL:  { days: 20, hours: "80h+",   weeks: 4,   color: "#DC2626" },
+  XXL: { days: 40, hours: "160h+",  weeks: 8,   color: "#7C3AED" },
 };
 
-const TEAMS = ["CareCo", "PHNX", "NEMO", "KITN"];
+const TEAMS = ["CareCo", "Doctolib", "PHNX", "NEMO", "KITN"];
 
 const TEAM_COLORS = {
-  CareCo: "#F59E0B",
-  PHNX:   "#A855F7",
-  NEMO:   "#3B82F6",
-  KITN:   "#10B981",
+  CareCo:   "#F59E0B",
+  Doctolib: "#1D6AC5",
+  PHNX:     "#A855F7",
+  NEMO:     "#3B82F6",
+  KITN:     "#10B981",
+};
+
+const TYPE_OPTIONS = ["discovery", "delivery", "foundation"];
+const TYPE_COLORS  = {
+  discovery:  "#0EA5E9",
+  delivery:   "#8B5CF6",
+  foundation: "#F97316",
+};
+
+const STATUS_OPTIONS = ["Unassigned", "Planned", "In Progress", "Done", "Blocked"];
+const STATUS_COLORS  = {
+  "Unassigned":  "#6B7280",
+  "Planned":     "#2563EB",
+  "In Progress": "#D97706",
+  "Done":        "#059669",
+  "Blocked":     "#DC2626",
+};
+
+// Oxygen design system primary button style (Doctolib)
+const OXYGEN_BTN_STYLE = {
+  background:   "#1D6AC5",
+  color:        "#FFFFFF",
+  borderRadius: "6px",
+  padding:      "8px 16px",
+  fontSize:     "14px",
+  fontWeight:   600,
+  lineHeight:   "20px",
+  border:       "none",
+  cursor:       "pointer",
+  display:      "inline-flex",
+  alignItems:   "center",
+  gap:          "6px",
 };
 
 // NL public holidays Q2 2026 (Easter = April 5, 2026)
@@ -50,816 +93,220 @@ const NL_HOLIDAYS = [
   { date: "2026-05-25", name: "Whit Monday" },
 ];
 
-const holidaySet = new Set(NL_HOLIDAYS.map((h) => h.date));
+const HOLIDAY_SET = new Set(NL_HOLIDAYS.map((h) => h.date));
 
-const Q2_START = new Date(2026, 3, 1);  // April 1
-const Q2_END   = new Date(2026, 5, 30); // June 30
+function isWorkingDay(d) {
+  const dow = d.getDay();
+  if (dow === 0 || dow === 6) return false;
+  const iso = d.toISOString().slice(0, 10);
+  return !HOLIDAY_SET.has(iso);
+}
 
-// ─── Date helpers ─────────────────────────────────────────────────────────────
-
-const isWorkingDay = (d) => {
-  const day = d.getDay();
-  if (day === 0 || day === 6) return false;
-  return !holidaySet.has(d.toISOString().split("T")[0]);
-};
-
-const getWorkingDaysBetween = (start, end) => {
-  let count = 0;
-  const cur = new Date(start);
-  cur.setHours(0, 0, 0, 0);
-  const e = new Date(end);
-  e.setHours(0, 0, 0, 0);
-  while (cur <= e) {
-    if (isWorkingDay(cur)) count++;
-    cur.setDate(cur.getDate() + 1);
-  }
-  return count;
-};
-
-// Returns the last working day after `workingDays` days starting from startDate
-const addWorkingDays = (startDateStr, workingDays) => {
+function addWorkingDays(startDateStr, n) {
   const d = new Date(startDateStr);
   d.setHours(0, 0, 0, 0);
-  let remaining = workingDays - 1;
+  let remaining = n - 1;
   while (remaining > 0) {
     d.setDate(d.getDate() + 1);
     if (isWorkingDay(d)) remaining--;
   }
   return d;
-};
+}
 
-const fmt = (d) => d.toISOString().split("T")[0];
+// Subtract N working days backward from endDateStr (devStartDate = last day of design work)
+function subtractWorkingDays(endDateStr, n) {
+  const d = new Date(endDateStr);
+  d.setHours(0, 0, 0, 0);
+  let remaining = n - 1;
+  while (remaining > 0) {
+    d.setDate(d.getDate() - 1);
+    if (isWorkingDay(d)) remaining--;
+  }
+  return d;
+}
 
-const Q2_WORKING_DAYS = getWorkingDaysBetween(Q2_START, Q2_END); // 60 days
+function fmtDate(d) {
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+}
 
-// ─── Initial state ────────────────────────────────────────────────────────────
+// Q2 2026 boundaries
+const Q2_START = new Date("2026-04-01");
+const Q2_END   = new Date("2026-06-30");
+const Q2_DAYS  = Math.round((Q2_END - Q2_START) / 86400000) + 1; // 91
+
+// Count working days in Q2 2026
+let Q2_WORKING_DAYS = 0;
+{
+  const d = new Date(Q2_START);
+  while (d <= Q2_END) {
+    if (isWorkingDay(d)) Q2_WORKING_DAYS++;
+    d.setDate(d.getDate() + 1);
+  }
+}
+
+// ─── Default data ─────────────────────────────────────────────────────────────
 
 const INIT_MEMBERS = [
-  { id: "m1", name: "Designer 1",    role: "Senior Product Designer",   color: "#A855F7" },
-  { id: "m2", name: "Designer 2",    role: "Senior Product Designer",   color: "#3B82F6" },
-  { id: "m3", name: "Researcher",    role: "User Researcher",           color: "#10B981" },
-  { id: "m4", name: "David Brandau", role: "Senior Design Team Manager",color: "#F97316" },
+  { id: "m1", name: "Jill Jansen",     role: "Senior Product Designer", team: "CareCo" },
+  { id: "m2", name: "Axel Bauer",      role: "Senior Product Designer", team: "CareCo" },
+  { id: "m3", name: "Marie Dubois",    role: "User Researcher",         team: "CareCo" },
+  { id: "m4", name: "David Brandau",   role: "Senior Design Team Manager", team: "CareCo" },
 ];
 
 const EMPTY_FORM = {
-  title: "", team: "CareCo", type: "discovery", size: "M",
-  priority: false, ownerId: "m1", ownerPercent: 100,
-  supporterId: "", supporterPercent: 0, startDate: "2026-04-01",
+  title:          "",
+  team:           "CareCo",
+  type:           "discovery",
+  size:           "M",
+  priority:       false,
+  status:         "Unassigned",
+  description:    "",
+  ownerId:        "m1",
+  ownerPercent:   100,
+  supporterId:    "",
+  supporterPercent: 0,
+  devStartDate:   "2026-04-30",
 };
 
-// ─── Micro styles ─────────────────────────────────────────────────────────────
+// ─── Topic Form Modal ──────────────────────────────────────────────────────────
 
-const C = {
-  bg:      "#0D1117",
-  surface: "#161B22",
-  border:  "#30363D",
-  text:    "#E6EDF3",
-  muted:   "#8B949E",
-  dim:     "#484F58",
-};
+function TopicFormModal({ initial, members, onSave, onCancel }) {
+  const [form, setForm] = useState(initial);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-const card = {
-  background: C.surface,
-  border: `1px solid ${C.border}`,
-  borderRadius: 8,
-  padding: 16,
-  marginBottom: 10,
-};
-
-const inp = {
-  background: C.bg,
-  border: `1px solid ${C.border}`,
-  borderRadius: 6,
-  color: C.text,
-  padding: "6px 10px",
-  fontSize: 13,
-  width: "100%",
-  boxSizing: "border-box",
-  outline: "none",
-};
-
-const btn = (bg = "#238636", color = "#fff") => ({
-  background: bg, color,
-  border: "none", borderRadius: 6,
-  padding: "7px 16px", fontSize: 13, fontWeight: 600,
-  cursor: "pointer", whiteSpace: "nowrap",
-});
-
-const ghost = {
-  background: "transparent", color: C.muted,
-  border: `1px solid ${C.border}`,
-  borderRadius: 6, padding: "6px 12px",
-  fontSize: 12, cursor: "pointer",
-};
-
-const lbl = { fontSize: 12, color: C.muted, marginBottom: 4, display: "block" };
-
-// ─── Badge ────────────────────────────────────────────────────────────────────
-
-const Badge = ({ label, color, small }) => (
-  <span style={{
-    background: color + "22", color,
-    border: `1px solid ${color}44`,
-    borderRadius: 4,
-    padding: small ? "1px 5px" : "2px 7px",
-    fontSize: small ? 10 : 11,
-    fontWeight: 600, whiteSpace: "nowrap",
-  }}>{label}</span>
-);
-
-// ─── TopicsTab ────────────────────────────────────────────────────────────────
-
-function TopicsTab({ topics, members, onAdd, onEdit, onDelete }) {
-  const [filter, setFilter] = useState("all");
-
-  const filters = ["all", "⭐ priority", ...TEAMS];
-  const filtered = topics.filter((t) => {
-    if (filter === "all") return true;
-    if (filter === "⭐ priority") return t.priority;
-    return t.team === filter;
-  });
-
-  return (
-    <div>
-      {/* Toolbar */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
-        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-          {filters.map((f) => (
-            <button key={f} onClick={() => setFilter(f)} style={{
-              ...ghost,
-              background: filter === f ? "#21262D" : "transparent",
-              color: filter === f ? C.text : C.muted,
-              borderColor: filter === f ? C.dim : C.border,
-              padding: "4px 10px",
-            }}>{f}</button>
-          ))}
-        </div>
-        <button onClick={onAdd} style={btn()}>+ Add Topic</button>
-      </div>
-
-      {/* Summary row */}
-      {topics.length > 0 && (
-        <div style={{ ...card, display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 14, padding: "10px 16px" }}>
-          {Object.keys(SIZES).map((sz) => {
-            const count = topics.filter((t) => t.size === sz).length;
-            if (!count) return null;
-            return (
-              <div key={sz} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <Badge label={sz} color={SIZES[sz].color} />
-                <span style={{ fontSize: 12, color: C.muted }}>×{count}</span>
-              </div>
-            );
-          })}
-          <div style={{ marginLeft: "auto", fontSize: 12, color: C.muted }}>
-            {filtered.length} topic{filtered.length !== 1 ? "s" : ""}
-          </div>
-        </div>
-      )}
-
-      {/* Topics */}
-      {filtered.length === 0 && (
-        <div style={{ textAlign: "center", color: C.dim, padding: "48px 0", fontSize: 13 }}>
-          {topics.length === 0 ? "No topics yet — add one to kick off Q2 planning." : "No topics match this filter."}
-        </div>
-      )}
-      {filtered.map((t) => {
-        const owner     = members.find((m) => m.id === t.ownerId);
-        const supporter = members.find((m) => m.id === t.supporterId);
-        const sz        = SIZES[t.size];
-        const ownerDays = t.supporterId ? (sz.days * t.ownerPercent / 100) : sz.days;
-        const suppDays  = supporter ? sz.days * t.supporterPercent / 100 : 0;
-        return (
-          <div key={t.id} style={{
-            ...card,
-            borderLeft: `3px solid ${TEAM_COLORS[t.team] || C.border}`,
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                {/* Title row */}
-                <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7, flexWrap: "wrap" }}>
-                  {t.priority && <span title="High priority" style={{ fontSize: 13 }}>⭐</span>}
-                  <span style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{t.title}</span>
-                  <Badge label={t.team} color={TEAM_COLORS[t.team]} />
-                  <Badge label={t.type} color={C.dim} />
-                </div>
-                {/* Meta row */}
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <Badge label={`${t.size} · ${sz.hours} · ${sz.days}d`} color={sz.color} />
-                  {owner && (
-                    <span style={{ fontSize: 12, color: C.muted }}>
-                      <span style={{ color: owner.color }}>●</span>{" "}
-                      {owner.name}
-                      {t.supporterId ? ` (${t.ownerPercent}% · ${ownerDays.toFixed(1)}d)` : ` (${ownerDays.toFixed(1)}d)`}
-                    </span>
-                  )}
-                  {supporter && (
-                    <span style={{ fontSize: 12, color: C.muted }}>
-                      +{" "}<span style={{ color: supporter.color }}>●</span>{" "}
-                      {supporter.name} ({t.supporterPercent}% · {suppDays.toFixed(1)}d)
-                    </span>
-                  )}
-                  {t.startDate && (
-                    <span style={{ fontSize: 12, color: C.dim }}>
-                      📅 {t.startDate}
-                      {" → "}
-                      {fmt(addWorkingDays(t.startDate, sz.days))}
-                    </span>
-                  )}
-                </div>
-              </div>
-              {/* Actions */}
-              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                <button onClick={() => onEdit(t)} style={{ ...ghost, padding: "4px 10px" }}>Edit</button>
-                <button onClick={() => onDelete(t.id)} style={{ ...ghost, padding: "4px 10px", color: "#F85149", borderColor: "#F8514933" }}>✕</button>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── TeamTab ──────────────────────────────────────────────────────────────────
-
-function TeamTab({ members, setMembers, vacation, setVacation }) {
-  const updateName = (id, name) =>
-    setMembers((ms) => ms.map((m) => (m.id === id ? { ...m, name } : m)));
-  const updateVac = (id, val) =>
-    setVacation((v) => ({ ...v, [id]: Math.max(0, Math.min(Q2_WORKING_DAYS, parseInt(val) || 0)) }));
-
-  return (
-    <div>
-      {/* Q2 summary */}
-      <div style={{ ...card, background: "#0D1117", marginBottom: 16 }}>
-        <div style={{ fontSize: 13, color: C.muted }}>
-          Q2 2026 total working days (NL 🇳🇱):{" "}
-          <strong style={{ color: C.text }}>{Q2_WORKING_DAYS} days</strong>
-          <span style={{ marginLeft: 12, color: C.dim }}>
-            April 1 – June 30 · excluding {NL_HOLIDAYS.length} public holidays
-          </span>
-        </div>
-      </div>
-
-      {/* Members */}
-      {members.map((m) => {
-        const avail = Q2_WORKING_DAYS - (vacation[m.id] || 0);
-        return (
-          <div key={m.id} style={{ ...card }}>
-            <div style={{ display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2, width: "100%" }}>
-                <div style={{ width: 10, height: 10, borderRadius: "50%", background: m.color, flexShrink: 0 }} />
-                <span style={{ fontWeight: 600, fontSize: 14 }}>{m.name}</span>
-                <span style={{ fontSize: 12, color: C.muted }}>{m.role}</span>
-              </div>
-              <div style={{ flex: 2, minWidth: 160 }}>
-                <label style={lbl}>Display Name</label>
-                <input style={inp} value={m.name} onChange={(e) => updateName(m.id, e.target.value)} />
-              </div>
-              <div style={{ width: 120 }}>
-                <label style={lbl}>Vacation Days (Q2)</label>
-                <input
-                  type="number" min={0} max={Q2_WORKING_DAYS} style={inp}
-                  value={vacation[m.id] || 0}
-                  onChange={(e) => updateVac(m.id, e.target.value)}
-                />
-              </div>
-              <div style={{ fontSize: 13, color: C.muted, paddingBottom: 6 }}>
-                <span style={{ color: C.text, fontWeight: 600, fontSize: 18 }}>{avail}</span>
-                <span style={{ marginLeft: 4 }}>available days</span>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-
-      {/* Holidays list */}
-      <div style={{ ...card, background: "#0D1117", marginTop: 6 }}>
-        <div style={{ fontSize: 12, color: C.dim, fontWeight: 600, marginBottom: 10 }}>
-          🇳🇱 Netherlands Public Holidays Q2 2026
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {NL_HOLIDAYS.map((h) => (
-            <span key={h.date} style={{
-              fontSize: 12, color: C.muted,
-              background: C.surface, padding: "4px 10px",
-              borderRadius: 4, border: `1px solid ${C.border}`,
-            }}>
-              {h.date} · {h.name}
-            </span>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── CapacityTab ──────────────────────────────────────────────────────────────
-
-function CapacityTab({ capacities, topics, members }) {
-  return (
-    <div>
-      {/* Cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14, marginBottom: 24 }}>
-        {capacities.map((c) => {
-          const pct  = c.availableDays > 0 ? Math.min(100, (c.allocatedDays / c.availableDays) * 100) : 0;
-          const over = c.allocatedDays > c.availableDays;
-          const barColor = over ? "#F85149" : pct > 85 ? "#D29922" : c.color;
-          return (
-            <div key={c.id} style={{ ...card }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                <div style={{ width: 10, height: 10, borderRadius: "50%", background: c.color }} />
-                <span style={{ fontWeight: 600, fontSize: 14 }}>{c.name}</span>
-              </div>
-              <div style={{ fontSize: 12, color: C.muted, marginBottom: 14 }}>{c.role}</div>
-
-              {/* Bar */}
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.muted, marginBottom: 5 }}>
-                  <span>Allocated</span>
-                  <span style={{ color: over ? "#F85149" : C.text, fontWeight: 600 }}>
-                    {c.allocatedDays.toFixed(1)} / {c.availableDays}d
-                  </span>
-                </div>
-                <div style={{ height: 8, background: C.bg, borderRadius: 4, overflow: "hidden" }}>
-                  <div style={{
-                    height: "100%", borderRadius: 4,
-                    width: `${pct}%`, background: barColor,
-                    transition: "width 0.4s",
-                  }} />
-                </div>
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
-                <span style={{ color: C.dim }}>Q2: {c.availableDays}d available</span>
-                <span style={{ color: over ? "#F85149" : "#3FB950", fontWeight: 600 }}>
-                  {over
-                    ? `${(c.allocatedDays - c.availableDays).toFixed(1)}d over`
-                    : `${c.remaining.toFixed(1)}d free`}
-                </span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Per-person topic breakdown */}
-      {capacities.map((c) => {
-        const myTopics = topics.filter((t) => t.ownerId === c.id || t.supporterId === c.id);
-        if (!myTopics.length) return null;
-        return (
-          <div key={c.id} style={{ ...card, marginBottom: 12 }}>
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ width: 8, height: 8, borderRadius: "50%", background: c.color }} />
-              {c.name}'s Topics
-            </div>
-            {myTopics.map((t) => {
-              const isOwner = t.ownerId === c.id;
-              const pct     = isOwner ? (t.supporterId ? t.ownerPercent / 100 : 1) : t.supporterPercent / 100;
-              const days    = SIZES[t.size].days * pct;
-              return (
-                <div key={t.id} style={{
-                  display: "flex", justifyContent: "space-between", alignItems: "center",
-                  padding: "7px 0", borderBottom: `1px solid ${C.border}`, fontSize: 13,
-                }}>
-                  <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
-                    {t.priority && <span style={{ color: "#D29922" }}>⭐</span>}
-                    <span style={{ color: C.text }}>{t.title}</span>
-                    <Badge label={t.team} color={TEAM_COLORS[t.team]} small />
-                    <Badge label={t.size} color={SIZES[t.size].color} small />
-                  </div>
-                  <div style={{ color: C.muted, flexShrink: 0, paddingLeft: 12 }}>
-                    <span style={{ color: isOwner ? C.text : C.muted }}>
-                      {isOwner ? "Owner" : "Supporter"} · {days.toFixed(1)}d
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── TimelineTab ──────────────────────────────────────────────────────────────
-
-function TimelineTab({ timelineTopics, members, onUpdateTopicDate }) {
-  const Q2_CAL_DAYS  = 91; // April 1 – June 30 inclusive
-  const trackAreaRef = useRef(null); // ref on the header months container = track width
-  const dragRef      = useRef(null); // { topicId, originX, originDate } — set on mousedown
-  const latestDrag   = useRef(null); // { topicId, newDate } — updated every mousemove
-  const [dragState, setDragState] = useState(null); // drives live preview
-
-  const months = [
-    { label: "April 2026", days: 30 },
-    { label: "May 2026",   days: 31 },
-    { label: "June 2026",  days: 30 },
-  ];
-
-  const dayOffset = (dateStr) => {
-    const d = new Date(dateStr);
-    d.setHours(0, 0, 0, 0);
-    const s = new Date(Q2_START);
-    s.setHours(0, 0, 0, 0);
-    return Math.floor((d - s) / 86400000);
-  };
-
-  const dateFromOffset = (rawOffset) => {
-    const clamped = Math.max(0, Math.min(Q2_CAL_DAYS - 1, Math.round(rawOffset)));
-    const d = new Date(Q2_START);
-    d.setDate(d.getDate() + clamped);
-    return fmt(d);
-  };
-
-  // Today line
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todayOffset = dayOffset(fmt(today));
-  const showToday = todayOffset >= 0 && todayOffset <= Q2_CAL_DAYS;
-
-  // ── Drag & drop ──────────────────────────────────────────────────────────────
-  useEffect(() => {
-    const onMouseMove = (e) => {
-      if (!dragRef.current || !trackAreaRef.current) return;
-      const { topicId, originX, originDate } = dragRef.current;
-      const trackW     = trackAreaRef.current.getBoundingClientRect().width;
-      const pixPerDay  = trackW / Q2_CAL_DAYS;
-      const deltaDays  = (e.clientX - originX) / pixPerDay;
-      const newDate    = dateFromOffset(dayOffset(originDate) + deltaDays);
-      latestDrag.current = { topicId, newDate };
-      setDragState({ topicId, newDate });
-    };
-
-    const onMouseUp = () => {
-      if (latestDrag.current) {
-        onUpdateTopicDate(latestDrag.current.topicId, latestDrag.current.newDate);
-        latestDrag.current = null;
-      }
-      dragRef.current = null;
-      setDragState(null);
-      document.body.style.cursor = "";
-    };
-
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup",   onMouseUp);
-    return () => {
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup",   onMouseUp);
-    };
-  }, [onUpdateTopicDate]);
-
-  const handleBarMouseDown = (e, topic) => {
-    e.preventDefault();
-    dragRef.current = { topicId: topic.id, originX: e.clientX, originDate: topic.startDate };
-    setDragState({ topicId: topic.id, newDate: topic.startDate });
-    document.body.style.cursor = "grabbing";
-  };
-
-  if (!timelineTopics.length) {
-    return (
-      <div style={{ textAlign: "center", color: C.dim, padding: "60px 0", fontSize: 13 }}>
-        Add topics with start dates to see them on the timeline.
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ overflowX: "auto", userSelect: "none" }}>
-      <div style={{ minWidth: 860 }}>
-
-        {/* Month header row */}
-        <div style={{ display: "flex" }}>
-          <div style={{ width: 200, flexShrink: 0 }} />
-          <div ref={trackAreaRef} style={{ flex: 1, display: "flex" }}>
-            {months.map((m, i) => (
-              <div key={i} style={{
-                width: `${(m.days / Q2_CAL_DAYS) * 100}%`,
-                padding: "5px 8px",
-                fontSize: 11, color: C.muted, fontWeight: 600,
-                borderLeft: `1px solid ${C.border}`,
-                background: C.bg,
-                boxSizing: "border-box",
-              }}>{m.label}</div>
-            ))}
-          </div>
-        </div>
-
-        {/* Topic rows */}
-        {timelineTopics.map((t) => {
-          const isDragging     = dragState?.topicId === t.id;
-          const effectiveStart = isDragging ? dragState.newDate : t.startDate;
-          const effectiveEnd   = addWorkingDays(effectiveStart, SIZES[t.size]?.days || 5);
-          const startOff       = dayOffset(effectiveStart);
-          const dur            = (effectiveEnd - new Date(effectiveStart)) / 86400000 + 1;
-          const left           = Math.max(0, startOff) / Q2_CAL_DAYS * 100;
-          const width          = Math.min(dur, Q2_CAL_DAYS - Math.max(0, startOff)) / Q2_CAL_DAYS * 100;
-          const owner          = members.find((x) => x.id === t.ownerId);
-          const supp           = t.supporterId ? members.find((x) => x.id === t.supporterId) : null;
-          const ownerFlex      = t.supporterId ? t.ownerPercent     : 100;
-          const suppFlex       = t.supporterId ? t.supporterPercent : 0;
-
-          return (
-            <div key={t.id} style={{ display: "flex", alignItems: "center", marginBottom: 5, minHeight: 38 }}>
-
-              {/* Row label */}
-              <div style={{ width: 200, flexShrink: 0, paddingRight: 10 }}>
-                <div style={{ fontSize: 12, fontWeight: 500, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {t.priority ? "⭐ " : ""}{t.title}
-                </div>
-                <div style={{ fontSize: 10, color: C.dim, display: "flex", gap: 5, alignItems: "center", marginTop: 1, flexWrap: "wrap" }}>
-                  <span>{t.size}</span>
-                  <span>·</span>
-                  {owner && <><span style={{ color: owner.color }}>●</span><span>{owner.name}</span></>}
-                  {supp  && <><span style={{ color: supp.color  }}>●</span><span>{supp.name} ({t.supporterPercent}%)</span></>}
-                </div>
-              </div>
-
-              {/* Bar track */}
-              <div style={{
-                flex: 1, position: "relative", height: 30,
-                background: C.bg, borderRadius: 4,
-                border: `1px solid ${C.border}`,
-              }}>
-                {/* Month dividers */}
-                {[30, 61].map((d) => (
-                  <div key={d} style={{
-                    position: "absolute", left: `${d / Q2_CAL_DAYS * 100}%`,
-                    top: 0, bottom: 0, width: 1, background: C.border,
-                    pointerEvents: "none",
-                  }} />
-                ))}
-
-                {/* Today line */}
-                {showToday && (
-                  <div style={{
-                    position: "absolute", left: `${todayOffset / Q2_CAL_DAYS * 100}%`,
-                    top: -4, bottom: -4, width: 2, background: "#F85149",
-                    borderRadius: 1, zIndex: 3, pointerEvents: "none",
-                  }} />
-                )}
-
-                {/* ── Draggable bar (split-color for owner + supporter) ── */}
-                {startOff < Q2_CAL_DAYS && startOff + dur > 0 && (
-                  <div
-                    onMouseDown={(e) => handleBarMouseDown(e, t)}
-                    title={`${t.title}\n${effectiveStart} → ${fmt(effectiveEnd)}\nDrag to reschedule`}
-                    style={{
-                      position: "absolute",
-                      left: `${left}%`,
-                      width: `${Math.max(width, 0.8)}%`,
-                      height: "100%",
-                      borderRadius: 4,
-                      display: "flex",
-                      overflow: "hidden",
-                      opacity: isDragging ? 0.8 : 0.9,
-                      cursor: isDragging ? "grabbing" : "grab",
-                      boxSizing: "border-box",
-                      boxShadow: isDragging ? `0 0 0 2px ${owner?.color || "#fff"}, 0 4px 12px rgba(0,0,0,0.4)` : "none",
-                    }}
-                  >
-                    {/* Owner segment — always present */}
-                    <div style={{
-                      flex: ownerFlex,
-                      background: owner?.color || TEAM_COLORS[t.team],
-                      display: "flex", alignItems: "center", paddingLeft: 6,
-                      overflow: "hidden", minWidth: 0,
-                    }}>
-                      <span style={{ fontSize: 10, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {width > 7 ? `${effectiveStart} → ${fmt(effectiveEnd)}` : ""}
-                      </span>
-                    </div>
-
-                    {/* Supporter segment — only if a supporter is assigned */}
-                    {supp && suppFlex > 0 && (
-                      <div style={{
-                        flex: suppFlex,
-                        background: supp.color,
-                        minWidth: suppFlex >= 15 ? 4 : 0,
-                        opacity: 0.9,
-                      }} />
-                    )}
-                  </div>
-                )}
-
-                {/* Drag tooltip — new date label that follows the bar */}
-                {isDragging && (
-                  <div style={{
-                    position: "absolute",
-                    left: `${Math.min(left, 82)}%`,
-                    bottom: "calc(100% + 4px)",
-                    background: "#21262D",
-                    border: `1px solid ${owner?.color || C.border}`,
-                    borderRadius: 4,
-                    padding: "3px 8px",
-                    fontSize: 11, color: C.text,
-                    whiteSpace: "nowrap",
-                    pointerEvents: "none",
-                    zIndex: 20,
-                  }}>
-                    📅 {effectiveStart}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-
-        {/* Legend */}
-        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginTop: 16, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
-          {members.map((m) => (
-            <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: C.muted }}>
-              <div style={{ width: 12, height: 12, borderRadius: 2, background: m.color }} />
-              {m.name}
-            </div>
-          ))}
-          {showToday && (
-            <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: C.muted }}>
-              <div style={{ width: 2, height: 12, background: "#F85149", borderRadius: 1 }} />
-              Today
-            </div>
-          )}
-          <div style={{ marginLeft: "auto", fontSize: 11, color: C.dim, fontStyle: "italic" }}>
-            ← drag bars to reschedule
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── TopicFormModal ───────────────────────────────────────────────────────────
-
-function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
-  const set = (key, val) => setForm((p) => ({ ...p, [key]: val }));
-  const hasSupporter = !!form.supporterId;
-  const totalPct     = hasSupporter ? form.ownerPercent + form.supporterPercent : 100;
+  const ownerPercent    = parseInt(form.ownerPercent, 10)    || 100;
+  const supporterPercent = 100 - ownerPercent;
 
   return (
     <div style={{
-      position: "fixed", inset: 0,
-      background: "rgba(0,0,0,0.65)",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      zIndex: 200, padding: 16,
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
     }}>
       <div style={{
-        background: C.surface,
-        border: `1px solid ${C.border}`,
-        borderRadius: 12, padding: 24,
-        width: "100%", maxWidth: 520,
-        maxHeight: "90vh", overflowY: "auto",
+        background: "#1C2333", borderRadius: "12px", padding: "28px 32px",
+        width: "560px", maxHeight: "90vh", overflowY: "auto",
+        boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
       }}>
-        <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 20, color: C.text }}>
-          {isEdit ? "Edit Topic" : "New Topic"}
-        </div>
+        <h2 style={{ margin: "0 0 20px", color: "#F1F5F9", fontSize: "18px" }}>
+          {initial.title ? "Edit Topic" : "Add Topic"}
+        </h2>
 
         {/* Title */}
-        <div style={{ marginBottom: 14 }}>
-          <label style={lbl}>Title *</label>
-          <input
-            style={inp} value={form.title} autoFocus
-            onChange={(e) => set("title", e.target.value)}
-            placeholder="e.g. PHNX appointment flow redesign"
-          />
-        </div>
+        <label style={labelStyle}>Topic title</label>
+        <input
+          style={inputStyle}
+          placeholder="e.g. PHNX appointment flow redesign"
+          value={form.title}
+          onChange={(e) => set("title", e.target.value)}
+        />
+
+        {/* Description */}
+        <label style={labelStyle}>Description (optional)</label>
+        <textarea
+          style={{ ...inputStyle, height: "72px", resize: "vertical" }}
+          placeholder="Short context, goals, or notes…"
+          value={form.description}
+          onChange={(e) => set("description", e.target.value)}
+        />
 
         {/* Team + Type */}
-        <div style={{ display: "flex", gap: 12, marginBottom: 14 }}>
-          <div style={{ flex: 1 }}>
-            <label style={lbl}>Team</label>
-            <select style={inp} value={form.team} onChange={(e) => set("team", e.target.value)}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          <div>
+            <label style={labelStyle}>Team</label>
+            <select style={inputStyle} value={form.team} onChange={(e) => set("team", e.target.value)}>
               {TEAMS.map((t) => <option key={t}>{t}</option>)}
             </select>
           </div>
-          <div style={{ flex: 1 }}>
-            <label style={lbl}>Type</label>
-            <select style={inp} value={form.type} onChange={(e) => set("type", e.target.value)}>
-              <option value="discovery">Discovery</option>
-              <option value="delivery">Delivery</option>
+          <div>
+            <label style={labelStyle}>Type</label>
+            <select style={inputStyle} value={form.type} onChange={(e) => set("type", e.target.value)}>
+              {TYPE_OPTIONS.map((t) => <option key={t}>{t}</option>)}
             </select>
           </div>
         </div>
 
-        {/* Size + Start date */}
-        <div style={{ display: "flex", gap: 12, marginBottom: 14 }}>
-          <div style={{ flex: 1 }}>
-            <label style={lbl}>T-shirt Size</label>
-            <select style={inp} value={form.size} onChange={(e) => set("size", e.target.value)}>
+        {/* Size + Status */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          <div>
+            <label style={labelStyle}>Size</label>
+            <select style={inputStyle} value={form.size} onChange={(e) => set("size", e.target.value)}>
               {Object.entries(SIZES).map(([k, v]) => (
-                <option key={k} value={k}>{k} – {v.hours} · ~{v.days}d · {v.weeks}wk</option>
+                <option key={k} value={k}>{k} – {v.hours} (~{v.weeks}w)</option>
               ))}
             </select>
           </div>
-          <div style={{ flex: 1 }}>
-            <label style={lbl}>Start Date</label>
-            <input
-              type="date" style={inp}
-              value={form.startDate}
-              min="2026-04-01" max="2026-06-30"
-              onChange={(e) => set("startDate", e.target.value)}
-            />
-          </div>
-        </div>
-
-        {/* Est end date preview */}
-        {form.startDate && (
-          <div style={{ marginBottom: 14, fontSize: 12, color: C.muted }}>
-            Estimated end:{" "}
-            <strong style={{ color: C.text }}>
-              {fmt(addWorkingDays(form.startDate, SIZES[form.size].days))}
-            </strong>
-            {" "}({SIZES[form.size].days} working days)
-          </div>
-        )}
-
-        {/* Priority */}
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ ...lbl, display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
-            <input
-              type="checkbox" checked={form.priority}
-              onChange={(e) => set("priority", e.target.checked)}
-              style={{ accentColor: "#D29922", width: 14, height: 14 }}
-            />
-            <span>⭐ Mark as High Priority</span>
-          </label>
-        </div>
-
-        {/* Owner */}
-        <div style={{ display: "flex", gap: 12, marginBottom: 14, alignItems: "flex-end" }}>
-          <div style={{ flex: 2 }}>
-            <label style={lbl}>Owner</label>
-            <select style={inp} value={form.ownerId} onChange={(e) => set("ownerId", e.target.value)}>
-              {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          <div>
+            <label style={labelStyle}>Status</label>
+            <select style={inputStyle} value={form.status} onChange={(e) => set("status", e.target.value)}>
+              {STATUS_OPTIONS.map((s) => <option key={s}>{s}</option>)}
             </select>
           </div>
-          {hasSupporter && (
-            <div style={{ width: 100 }}>
-              <label style={lbl}>Owner %</label>
-              <input
-                type="number" min={0} max={100} style={inp}
-                value={form.ownerPercent}
-                onChange={(e) => {
-                  const v = Math.min(100, Math.max(0, parseInt(e.target.value) || 0));
-                  set("ownerPercent", v);
-                  set("supporterPercent", 100 - v);
-                }}
-              />
-            </div>
-          )}
+        </div>
+
+        {/* Dev Start Date */}
+        <label style={labelStyle}>Development start date (end of design)</label>
+        <input
+          type="date"
+          style={inputStyle}
+          value={form.devStartDate}
+          onChange={(e) => set("devStartDate", e.target.value)}
+        />
+
+        {/* Owner */}
+        <label style={labelStyle}>Owner</label>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "8px" }}>
+          <select style={inputStyle} value={form.ownerId} onChange={(e) => set("ownerId", e.target.value)}>
+            {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+          <div style={{ position: "relative" }}>
+            <input
+              type="number" min="10" max="100" step="10"
+              style={inputStyle}
+              value={ownerPercent}
+              onChange={(e) => set("ownerPercent", parseInt(e.target.value, 10))}
+            />
+            <span style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", color: "#94A3B8", fontSize: "12px" }}>%</span>
+          </div>
         </div>
 
         {/* Supporter */}
-        <div style={{ display: "flex", gap: 12, marginBottom: 14, alignItems: "flex-end" }}>
-          <div style={{ flex: 2 }}>
-            <label style={lbl}>Supporter (optional)</label>
-            <select
-              style={inp} value={form.supporterId}
-              onChange={(e) => {
-                const val = e.target.value;
-                set("supporterId", val);
-                if (val) { set("ownerPercent", 50); set("supporterPercent", 50); }
-                else      { set("ownerPercent", 100); set("supporterPercent", 0); }
-              }}
-            >
-              <option value="">— None —</option>
-              {members.filter((m) => m.id !== form.ownerId).map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
+        <label style={labelStyle}>Supporter (optional)</label>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "8px" }}>
+          <select style={inputStyle} value={form.supporterId} onChange={(e) => set("supporterId", e.target.value)}>
+            <option value="">— none —</option>
+            {members.filter((m) => m.id !== form.ownerId).map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+          <div style={{ position: "relative" }}>
+            <input
+              type="number" readOnly
+              style={{ ...inputStyle, opacity: 0.5 }}
+              value={supporterPercent}
+            />
+            <span style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", color: "#94A3B8", fontSize: "12px" }}>%</span>
           </div>
-          {hasSupporter && (
-            <div style={{ width: 100 }}>
-              <label style={lbl}>Supporter %</label>
-              <input
-                type="number" min={0} max={100} style={inp}
-                value={form.supporterPercent}
-                onChange={(e) => {
-                  const v = Math.min(100, Math.max(0, parseInt(e.target.value) || 0));
-                  set("supporterPercent", v);
-                  set("ownerPercent", 100 - v);
-                }}
-              />
-            </div>
-          )}
         </div>
 
-        {/* % warning */}
-        {hasSupporter && totalPct !== 100 && (
-          <div style={{ fontSize: 12, color: "#D29922", marginBottom: 12 }}>
-            ⚠ Owner + Supporter percentages should total 100% (currently {totalPct}%)
-          </div>
-        )}
+        {/* Priority */}
+        <label style={{ display: "flex", alignItems: "center", gap: "8px", color: "#94A3B8", fontSize: "13px", margin: "12px 0" }}>
+          <input
+            type="checkbox"
+            checked={form.priority}
+            onChange={(e) => set("priority", e.target.checked)}
+            style={{ accentColor: "#F59E0B", width: "16px", height: "16px" }}
+          />
+          Mark as priority
+        </label>
 
-        {/* Buttons */}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 22, borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
-          <button onClick={onClose} style={{ ...ghost, padding: "7px 16px" }}>Cancel</button>
+        {/* Actions */}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "20px" }}>
+          <button onClick={onCancel} style={cancelBtnStyle}>Cancel</button>
           <button
-            onClick={onSave}
-            style={{ ...btn(), opacity: form.title.trim() ? 1 : 0.4, cursor: form.title.trim() ? "pointer" : "default" }}
-            disabled={!form.title.trim()}
+            onClick={() => form.title.trim() && onSave({ ...form, ownerPercent, supporterPercent })}
+            style={{ ...OXYGEN_BTN_STYLE, opacity: form.title.trim() ? 1 : 0.5 }}
           >
-            {isEdit ? "Save Changes" : "Add Topic"}
+            Save topic
           </button>
         </div>
       </div>
@@ -867,149 +314,542 @@ function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
   );
 }
 
+const labelStyle = {
+  display: "block", fontSize: "12px", fontWeight: 600,
+  color: "#94A3B8", marginBottom: "4px", marginTop: "12px", textTransform: "uppercase", letterSpacing: "0.05em",
+};
+const inputStyle = {
+  width: "100%", boxSizing: "border-box",
+  background: "#0F172A", border: "1px solid #334155",
+  borderRadius: "6px", padding: "8px 10px",
+  color: "#F1F5F9", fontSize: "14px", outline: "none",
+};
+const cancelBtnStyle = {
+  background: "transparent", border: "1px solid #475569",
+  borderRadius: "6px", padding: "8px 16px",
+  color: "#94A3B8", fontSize: "14px", cursor: "pointer",
+};
+
+// ─── Topics Tab ───────────────────────────────────────────────────────────────
+
+function TopicsTab({ topics, members, onAdd, onEdit, onDelete }) {
+  const [showModal, setShowModal] = useState(false);
+  const [editTopic, setEditTopic] = useState(null);
+
+  const openAdd  = () => { setEditTopic(null); setShowModal(true); };
+  const openEdit = (t) => { setEditTopic(t); setShowModal(true); };
+  const handleSave = (form) => {
+    if (editTopic) onEdit({ ...editTopic, ...form });
+    else onAdd({ id: `t${Date.now()}`, ...form });
+    setShowModal(false);
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+        <h2 style={{ margin: 0, color: "#F1F5F9" }}>Topics ({topics.length})</h2>
+        <button onClick={openAdd} style={OXYGEN_BTN_STYLE}>
+          + Add Topic
+        </button>
+      </div>
+
+      {topics.length === 0 && (
+        <div style={{ textAlign: "center", color: "#475569", padding: "48px 0" }}>
+          No topics yet. Click "Add Topic" to start planning.
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+        {topics.map((t) => {
+          const owner     = members.find((m) => m.id === t.ownerId);
+          const supporter = members.find((m) => m.id === t.supporterId);
+          const size      = SIZES[t.size];
+          return (
+            <div key={t.id} style={{
+              background: "#1C2333", borderRadius: "10px", padding: "14px 18px",
+              borderLeft: `4px solid ${TEAM_COLORS[t.team] || "#475569"}`,
+              display: "grid", gridTemplateColumns: "1fr auto",
+              gap: "8px", alignItems: "start",
+            }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "4px" }}>
+                  {t.priority && <span style={{ fontSize: "14px" }}>⭐</span>}
+                  <span style={{ color: "#F1F5F9", fontWeight: 600, fontSize: "15px" }}>{t.title}</span>
+                  <span style={{ background: TEAM_COLORS[t.team] + "30", color: TEAM_COLORS[t.team], borderRadius: "4px", padding: "1px 8px", fontSize: "11px", fontWeight: 600 }}>{t.team}</span>
+                  <span style={{ background: TYPE_COLORS[t.type] + "30", color: TYPE_COLORS[t.type], borderRadius: "4px", padding: "1px 8px", fontSize: "11px", fontWeight: 600, textTransform: "capitalize" }}>{t.type}</span>
+                  <span style={{ background: size.color + "30", color: size.color, borderRadius: "4px", padding: "1px 8px", fontSize: "11px", fontWeight: 700 }}>{t.size}</span>
+                  <span style={{ background: STATUS_COLORS[t.status] + "25", color: STATUS_COLORS[t.status], borderRadius: "4px", padding: "1px 8px", fontSize: "11px", fontWeight: 600 }}>{t.status}</span>
+                </div>
+                {t.description && (
+                  <div style={{ color: "#64748B", fontSize: "12px", marginTop: "4px", fontStyle: "italic" }}>{t.description}</div>
+                )}
+                <div style={{ color: "#64748B", fontSize: "12px", marginTop: "6px" }}>
+                  {size.hours} · {size.weeks}w · dev starts {t.devStartDate} · owner: {owner?.name || "?"} ({t.ownerPercent}%){supporter ? ` · support: ${supporter.name} (${t.supporterPercent}%)` : ""}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button onClick={() => openEdit(t)} style={{ ...cancelBtnStyle, padding: "4px 12px", fontSize: "12px" }}>Edit</button>
+                <button onClick={() => onDelete(t.id)} style={{ ...cancelBtnStyle, padding: "4px 12px", fontSize: "12px", borderColor: "#DC2626", color: "#F87171" }}>Delete</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {showModal && (
+        <TopicFormModal
+          initial={editTopic || EMPTY_FORM}
+          members={members}
+          onSave={handleSave}
+          onCancel={() => setShowModal(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Team Tab ─────────────────────────────────────────────────────────────────
+
+function TeamTab({ members, vacation, onVacationChange }) {
+  return (
+    <div>
+      <h2 style={{ color: "#F1F5F9", marginBottom: "20px" }}>Team Members</h2>
+      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        {members.map((m) => (
+          <div key={m.id} style={{
+            background: "#1C2333", borderRadius: "10px", padding: "16px 20px",
+            display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px",
+          }}>
+            <div>
+              <div style={{ color: "#F1F5F9", fontWeight: 600 }}>{m.name}</div>
+              <div style={{ color: "#64748B", fontSize: "13px" }}>{m.role} · {m.team}</div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <label style={{ color: "#94A3B8", fontSize: "13px" }}>Vacation days (Q2):</label>
+              <input
+                type="number" min="0" max="60"
+                value={vacation[m.id] ?? 0}
+                onChange={(e) => onVacationChange(m.id, parseInt(e.target.value, 10) || 0)}
+                style={{ ...inputStyle, width: "64px", textAlign: "center" }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Capacity Tab ─────────────────────────────────────────────────────────────
+
+function CapacityTab({ topics, members, vacation }) {
+  const rows = members.map((m) => {
+    const vacDays    = vacation[m.id] ?? 0;
+    const available  = Q2_WORKING_DAYS - vacDays;
+    const ownerDays  = topics.filter((t) => t.ownerId === m.id).reduce((s, t) => s + SIZES[t.size].days * ((t.ownerPercent || 100) / 100), 0);
+    const suppDays   = topics.filter((t) => t.supporterId === m.id).reduce((s, t) => s + SIZES[t.size].days * ((t.supporterPercent || 0) / 100), 0);
+    const totalDays  = ownerDays + suppDays;
+    const pct        = available > 0 ? Math.round((totalDays / available) * 100) : 0;
+    const overloaded = pct > 100;
+    return { ...m, available, ownerDays, suppDays, totalDays, pct, overloaded };
+  });
+
+  return (
+    <div>
+      <h2 style={{ color: "#F1F5F9", marginBottom: "8px" }}>Q2 2026 Capacity</h2>
+      <p style={{ color: "#64748B", fontSize: "13px", marginBottom: "20px" }}>
+        {Q2_WORKING_DAYS} working days (excl. NL public holidays · Apr–Jun 2026)
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+        {rows.map((r) => (
+          <div key={r.id} style={{ background: "#1C2333", borderRadius: "10px", padding: "16px 20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+              <span style={{ color: "#F1F5F9", fontWeight: 600 }}>{r.name}</span>
+              <span style={{ color: r.overloaded ? "#F87171" : "#94A3B8", fontSize: "13px" }}>
+                {r.totalDays.toFixed(1)} / {r.available} days ({r.pct}%{r.overloaded ? " ⚠️ over" : ""})
+              </span>
+            </div>
+            <div style={{ background: "#0F172A", borderRadius: "6px", height: "10px", overflow: "hidden" }}>
+              <div style={{
+                width: `${Math.min(r.pct, 100)}%`,
+                height: "100%",
+                background: r.overloaded ? "#DC2626" : r.pct > 80 ? "#D97706" : "#2563EB",
+                transition: "width 0.3s",
+              }} />
+            </div>
+            <div style={{ color: "#475569", fontSize: "12px", marginTop: "6px" }}>
+              Owner: {r.ownerDays.toFixed(1)}d · Support: {r.suppDays.toFixed(1)}d · Vacation: {vacation[r.id] ?? 0}d
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Timeline Tab ─────────────────────────────────────────────────────────────
+
+const STRIPE_CSS = `
+  @keyframes stripe-move { from { background-position: 0 0; } to { background-position: 28px 0; } }
+  .bar-overlap {
+    background-image: repeating-linear-gradient(
+      45deg,
+      rgba(255,255,255,0.15) 0px,
+      rgba(255,255,255,0.15) 6px,
+      transparent 6px,
+      transparent 14px
+    ) !important;
+    animation: stripe-move 1s linear infinite;
+    box-shadow: 0 0 0 2px #D29922 !important;
+  }
+`;
+
+function TimelineTab({ topics, members, onUpdateDevStartDate }) {
+  const trackRef     = useRef(null);
+  const draggingRef  = useRef(null);
+  const [tooltip, setTooltip] = useState(null);
+
+  // Build bar positions
+  const bars = useMemo(() => {
+    return topics.map((t) => {
+      const size = SIZES[t.size];
+      const devStart = new Date(t.devStartDate);
+      devStart.setHours(0, 0, 0, 0);
+      const designStart = subtractWorkingDays(t.devStartDate, size.days);
+
+      const startOffset = Math.max(0, (designStart - Q2_START) / 86400000);
+      const endOffset   = Math.max(0, (devStart - Q2_START) / 86400000) + 1;
+      const left  = (startOffset / Q2_DAYS) * 100;
+      const width = Math.max(((endOffset - startOffset) / Q2_DAYS) * 100, 0.5);
+
+      const owner     = members.find((m) => m.id === t.ownerId);
+      const supporter = members.find((m) => m.id === t.supporterId);
+
+      return { ...t, left, width, designStart, devStart, owner, supporter, size };
+    });
+  }, [topics, members]);
+
+  // Overlap detection: same ownerId bars that intersect in calendar time
+  const overlapMap = useMemo(() => {
+    const map = {};
+    for (let i = 0; i < bars.length; i++) {
+      for (let j = i + 1; j < bars.length; j++) {
+        const a = bars[i]; const b = bars[j];
+        if (a.ownerId !== b.ownerId) continue;
+        // Overlap if intervals intersect
+        if (a.designStart < b.devStart && b.designStart < a.devStart) {
+          if (!map[a.id]) map[a.id] = [];
+          if (!map[b.id]) map[b.id] = [];
+          map[a.id].push(b);
+          map[b.id].push(a);
+        }
+      }
+    }
+    return map;
+  }, [bars]);
+
+  const hasOverlaps = Object.keys(overlapMap).length > 0;
+
+  // Drag logic
+  const onMouseDown = useCallback((e, bar) => {
+    e.preventDefault();
+    const trackEl = trackRef.current;
+    if (!trackEl) return;
+    const trackRect = trackEl.getBoundingClientRect();
+    const startX    = e.clientX;
+    const origLeft  = bar.left;
+
+    draggingRef.current = { id: bar.id, trackRect, startX, origLeft };
+
+    const onMouseMove = (me) => {
+      const { id, trackRect: tr, startX: sx, origLeft: ol } = draggingRef.current;
+      const dx    = me.clientX - sx;
+      const pctDx = (dx / tr.width) * 100;
+      const newLeft = Math.max(0, Math.min(ol + pctDx, 95));
+      // Convert newLeft% back to a date
+      const dayOffset = Math.round((newLeft / 100) * Q2_DAYS);
+      const newDesignStart = new Date(Q2_START);
+      newDesignStart.setDate(newDesignStart.getDate() + dayOffset);
+      // Find newDevStart by adding sizeDays forward
+      const barTopic  = topics.find((t) => t.id === id);
+      if (!barTopic) return;
+      const newDevStart = addWorkingDays(newDesignStart.toISOString().slice(0, 10), SIZES[barTopic.size].days);
+      onUpdateDevStartDate(id, newDevStart.toISOString().slice(0, 10));
+    };
+    const onMouseUp = () => {
+      draggingRef.current = null;
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [topics, onUpdateDevStartDate]);
+
+  // Month grid lines
+  const months = useMemo(() => {
+    const result = [];
+    const labels = [
+      { label: "April", start: new Date("2026-04-01"), end: new Date("2026-04-30") },
+      { label: "May",   start: new Date("2026-05-01"), end: new Date("2026-05-31") },
+      { label: "June",  start: new Date("2026-06-01"), end: new Date("2026-06-30") },
+    ];
+    labels.forEach(({ label, start, end }) => {
+      const left  = ((start - Q2_START) / 86400000 / Q2_DAYS) * 100;
+      const right = (((end - Q2_START) / 86400000 + 1) / Q2_DAYS) * 100;
+      result.push({ label, left, width: right - left });
+    });
+    return result;
+  }, []);
+
+  // Unique owners in order
+  const ownerIds = useMemo(() => {
+    const seen = new Set();
+    const list = [];
+    topics.forEach((t) => { if (!seen.has(t.ownerId)) { seen.add(t.ownerId); list.push(t.ownerId); }});
+    return list;
+  }, [topics]);
+
+  return (
+    <div>
+      <style>{STRIPE_CSS}</style>
+      <h2 style={{ color: "#F1F5F9", marginBottom: "4px" }}>Q2 2026 Timeline</h2>
+      <p style={{ color: "#64748B", fontSize: "13px", marginBottom: "16px" }}>
+        Bars end at the development start date. Drag to reschedule.
+      </p>
+
+      {hasOverlaps && (
+        <div style={{
+          background: "#451A03", border: "1px solid #D29922", borderRadius: "8px",
+          padding: "10px 16px", marginBottom: "16px", fontSize: "13px", color: "#FCD34D",
+        }}>
+          ⚠️ <strong>Scheduling conflicts detected.</strong> Some team members are assigned to overlapping projects simultaneously.
+          Concurrent work reduces effective throughput — two overlapping L projects may take ~4 weeks instead of 2.
+          Consider staggering start dates to improve flow.
+        </div>
+      )}
+
+      {/* Month header */}
+      <div style={{ position: "relative", height: "24px", marginBottom: "4px" }}>
+        {months.map((m) => (
+          <div key={m.label} style={{
+            position: "absolute", left: `${m.left}%`, width: `${m.width}%`,
+            textAlign: "center", fontSize: "11px", color: "#64748B", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em",
+          }}>{m.label}</div>
+        ))}
+      </div>
+
+      {/* Track */}
+      <div ref={trackRef} style={{ position: "relative", background: "#0F172A", borderRadius: "8px", padding: "8px 0", minHeight: "60px", userSelect: "none" }}>
+        {/* Grid lines */}
+        {months.map((m) => (
+          <div key={m.label} style={{
+            position: "absolute", left: `${m.left}%`, top: 0, bottom: 0,
+            width: "1px", background: "#1E293B",
+          }} />
+        ))}
+
+        {/* Today line */}
+        {(() => {
+          const today = new Date();
+          if (today >= Q2_START && today <= Q2_END) {
+            const pct = ((today - Q2_START) / 86400000 / Q2_DAYS) * 100;
+            return <div style={{ position: "absolute", left: `${pct}%`, top: 0, bottom: 0, width: "2px", background: "#F59E0B", opacity: 0.7, zIndex: 5 }} />;
+          }
+        })()}
+
+        {/* Rows by owner */}
+        {ownerIds.map((ownerId, rowIdx) => {
+          const owner     = members.find((m) => m.id === ownerId);
+          const rowBars   = bars.filter((b) => b.ownerId === ownerId);
+          const hasConflict = rowBars.some((b) => overlapMap[b.id]);
+          return (
+            <div key={ownerId} style={{ position: "relative", height: "38px", marginBottom: "6px" }}>
+              {/* Row label */}
+              <div style={{
+                position: "absolute", left: "4px", top: "50%", transform: "translateY(-50%)",
+                fontSize: "10px", color: "#475569", fontWeight: 600, zIndex: 10, whiteSpace: "nowrap",
+              }}>
+                {owner?.name?.split(" ")[0] || "?"}
+                {hasConflict && (
+                  <span title="This person has overlapping projects" style={{ marginLeft: "3px", cursor: "help" }}>⚠️</span>
+                )}
+              </div>
+
+              {rowBars.map((bar) => {
+                const isOverlap = !!overlapMap[bar.id];
+                const baseColor = SIZES[bar.size].color;
+                const ownerPct  = bar.ownerPercent || 100;
+                const suppPct   = 100 - ownerPct;
+                const suppColor = bar.supporter ? TEAM_COLORS[bar.supporter.team] || "#6B7280" : "transparent";
+
+                return (
+                  <div
+                    key={bar.id}
+                    className={isOverlap ? "bar-overlap" : ""}
+                    onMouseDown={(e) => onMouseDown(e, bar)}
+                    onMouseEnter={(e) => setTooltip({ bar, x: e.clientX, y: e.clientY })}
+                    onMouseLeave={() => setTooltip(null)}
+                    onMouseMove={(e) => setTooltip((t) => t ? { ...t, x: e.clientX, y: e.clientY } : null)}
+                    style={{
+                      position: "absolute",
+                      left:   `${bar.left}%`,
+                      width:  `${bar.width}%`,
+                      top:    "4px",
+                      height: "28px",
+                      borderRadius: "5px",
+                      cursor: "grab",
+                      overflow: "hidden",
+                      display: "flex",
+                      zIndex: 3,
+                      minWidth: "6px",
+                      boxShadow: isOverlap ? "0 0 0 2px #D29922" : "none",
+                    }}
+                  >
+                    {/* Owner segment */}
+                    <div style={{
+                      flex: ownerPct,
+                      background: baseColor,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: "10px", color: "#fff", fontWeight: 700, overflow: "hidden", whiteSpace: "nowrap",
+                    }}>
+                      {bar.width > 3 ? bar.title.slice(0, 12) : ""}
+                    </div>
+                    {/* Supporter segment */}
+                    {bar.supporterId && suppPct > 0 && (
+                      <div style={{ flex: suppPct, background: suppColor, opacity: 0.75 }} />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Legend */}
+      <div style={{ display: "flex", gap: "16px", marginTop: "12px", flexWrap: "wrap" }}>
+        {Object.entries(SIZES).map(([k, v]) => (
+          <div key={k} style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "11px", color: "#64748B" }}>
+            <div style={{ width: "12px", height: "12px", borderRadius: "3px", background: v.color }} />
+            {k} ({v.weeks}w)
+          </div>
+        ))}
+        <div style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "11px", color: "#D29922" }}>
+          <span>⚠️</span> Overlap / conflict
+        </div>
+      </div>
+
+      {/* Tooltip */}
+      {tooltip && (
+        <div style={{
+          position: "fixed",
+          left: tooltip.x + 12,
+          top:  tooltip.y - 10,
+          background: "#1C2333",
+          border: "1px solid #334155",
+          borderRadius: "8px",
+          padding: "10px 14px",
+          fontSize: "12px",
+          color: "#F1F5F9",
+          zIndex: 9999,
+          maxWidth: "260px",
+          pointerEvents: "none",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+        }}>
+          <div style={{ fontWeight: 700, marginBottom: "4px" }}>{tooltip.bar.title}</div>
+          <div style={{ color: "#94A3B8" }}>
+            {tooltip.bar.size} · {SIZES[tooltip.bar.size].hours}<br />
+            Design: {fmtDate(tooltip.bar.designStart)} → {fmtDate(tooltip.bar.devStart)}<br />
+            📅 dev starts {tooltip.bar.devStartDate}<br />
+            Owner: {tooltip.bar.owner?.name} ({tooltip.bar.ownerPercent}%)
+            {tooltip.bar.supporter && <><br />Support: {tooltip.bar.supporter.name} ({tooltip.bar.supporterPercent}%)</>}
+            {tooltip.bar.status && <><br />Status: {tooltip.bar.status}</>}
+          </div>
+          {overlapMap[tooltip.bar.id] && (
+            <div style={{ marginTop: "6px", color: "#FCD34D", borderTop: "1px solid #334155", paddingTop: "6px" }}>
+              ⚠️ Overlaps with: {overlapMap[tooltip.bar.id].map((b) => b.title).join(", ")}<br />
+              <span style={{ color: "#94A3B8" }}>Concurrent work reduces effective throughput.</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [tab,     setTab]     = useState("topics");
-  const [copied,  setCopied]  = useState(false);
+  const saved = loadInitialState();
 
-  // Load from URL hash or localStorage on first render
-  const [_init]   = useState(() => loadInitialState());
-  const [members, setMembers] = useState(_init?.members || INIT_MEMBERS);
-  const [vacation, setVacation] = useState(_init?.vacation || { m1: 0, m2: 0, m3: 0, m4: 0 });
-  const [topics,  setTopics]  = useState(_init?.topics   || []);
+  const [topics,  setTopics]  = useState(saved?.topics  || []);
+  const [members, setMembers] = useState(saved?.members || INIT_MEMBERS);
+  const [vacation, setVacation] = useState(saved?.vacation || {});
+  const [tab, setTab] = useState("topics");
+  const [copied, setCopied]   = useState(false);
 
-  const [showForm, setShowForm] = useState(false);
-  const [editId,   setEditId]   = useState(null);
-  const [form,    setForm]    = useState(EMPTY_FORM);
-
-  // Auto-save to localStorage whenever data changes
+  // Persist to localStorage on every change
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ topics, members, vacation }));
     } catch {}
   }, [topics, members, vacation]);
 
-  // Share button — encodes full state into URL hash and copies to clipboard
-  const handleShare = useCallback(() => {
-    const encoded = btoa(JSON.stringify({ topics, members, vacation }));
-    const url = `${window.location.href.split("#")[0]}#${encoded}`;
-    navigator.clipboard.writeText(url).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    }).catch(() => {
-      // Fallback: put in address bar so user can copy manually
-      window.location.hash = encoded;
-    });
-  }, [topics, members, vacation]);
+  const addTopic    = (t)  => setTopics((prev) => [...prev, t]);
+  const editTopic   = (t)  => setTopics((prev) => prev.map((x) => x.id === t.id ? t : x));
+  const deleteTopic = (id) => setTopics((prev) => prev.filter((x) => x.id !== id));
+  const updateDevStartDate = (id, date) => setTopics((prev) => prev.map((x) => x.id === id ? { ...x, devStartDate: date } : x));
+  const setVac = (memberId, days) => setVacation((prev) => ({ ...prev, [memberId]: days }));
 
-  const openAdd  = () => { setForm({ ...EMPTY_FORM, ownerId: members[0]?.id || "m1" }); setEditId(null); setShowForm(true); };
-  const openEdit = (t) => { setForm({ ...t }); setEditId(t.id); setShowForm(true); };
-
-  const saveTopic = () => {
-    if (!form.title.trim()) return;
-    if (editId) {
-      setTopics((ts) => ts.map((t) => (t.id === editId ? { ...form, id: editId } : t)));
-    } else {
-      setTopics((ts) => [...ts, { ...form, id: Date.now().toString() }]);
-    }
-    setShowForm(false);
+  const shareUrl = () => {
+    const state = JSON.stringify({ topics, members, vacation });
+    const hash  = btoa(state);
+    const url   = `${window.location.origin}${window.location.pathname}#${hash}`;
+    navigator.clipboard.writeText(url).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
   };
 
-  const deleteTopic = (id) => setTopics((ts) => ts.filter((t) => t.id !== id));
-
-  const updateTopicDate = useCallback((id, newDate) => {
-    setTopics((ts) => ts.map((t) => (t.id === id ? { ...t, startDate: newDate } : t)));
-  }, []);
-
-  // ── Capacity calculations ──
-  const capacities = useMemo(() => {
-    return members.map((m) => {
-      const availableDays = Q2_WORKING_DAYS - (vacation[m.id] || 0);
-      const allocatedDays = topics.reduce((sum, t) => {
-        const sd = SIZES[t.size]?.days || 0;
-        if (t.ownerId === m.id) {
-          return sum + sd * (t.supporterId ? t.ownerPercent / 100 : 1);
-        }
-        if (t.supporterId === m.id) {
-          return sum + sd * (t.supporterPercent / 100);
-        }
-        return sum;
-      }, 0);
-      return { ...m, availableDays, allocatedDays, remaining: availableDays - allocatedDays };
-    });
-  }, [members, vacation, topics]);
-
-  // ── Timeline data ──
-  const timelineTopics = useMemo(() => {
-    return topics
-      .filter((t) => t.startDate)
-      .map((t) => {
-        const endObj = addWorkingDays(t.startDate, SIZES[t.size]?.days || 5);
-        return { ...t, endObj };
-      })
-      .sort((a, b) => a.startDate.localeCompare(b.startDate));
-  }, [topics]);
-
-  const TABS = ["topics", "team", "capacity", "timeline"];
+  const TABS = [
+    { id: "topics",   label: "📋 Topics" },
+    { id: "team",     label: "👥 Team" },
+    { id: "capacity", label: "📊 Capacity" },
+    { id: "timeline", label: "📅 Timeline" },
+  ];
 
   return (
-    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", background: C.bg, minHeight: "100vh", color: C.text }}>
+    <div style={{ minHeight: "100vh", background: "#0F172A", color: "#F1F5F9", fontFamily: "'Inter', system-ui, sans-serif" }}>
       {/* Header */}
-      <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "14px 24px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#F59E0B" }} />
-          <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: "-0.3px" }}>CareCo Design Planner</span>
-          <span style={{ fontSize: 12, color: C.dim, marginLeft: 2 }}>Q2 2026</span>
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-            {["PHNX", "NEMO", "KITN"].map((t) => (
-              <Badge key={t} label={t} color={TEAM_COLORS[t]} small />
-            ))}
-            <button
-              onClick={handleShare}
-              title="Copy a shareable link with your full plan encoded in the URL"
-              style={{
-                ...btn(copied ? "#238636" : "#21262D", copied ? "#fff" : C.muted),
-                border: `1px solid ${copied ? "#238636" : C.border}`,
-                padding: "5px 12px", fontSize: 12,
-                display: "flex", alignItems: "center", gap: 5,
-                transition: "all 0.2s",
-              }}
-            >
-              {copied ? "✓ Link copied!" : "🔗 Share plan"}
-            </button>
+      <div style={{ background: "#1C2333", borderBottom: "1px solid #1E293B", padding: "0 32px" }}>
+        <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: "60px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <span style={{ fontSize: "22px" }}>🎨</span>
+            <span style={{ fontWeight: 700, fontSize: "18px" }}>CareCo Design Planner</span>
+            <span style={{ background: "#1D6AC530", color: "#60A5FA", borderRadius: "12px", padding: "2px 10px", fontSize: "11px", fontWeight: 600 }}>Q2 2026</span>
           </div>
+          <button onClick={shareUrl} style={{ ...cancelBtnStyle, fontSize: "13px", display: "flex", alignItems: "center", gap: "6px" }}>
+            {copied ? "✅ Copied!" : "🔗 Share"}
+          </button>
         </div>
-        <div style={{ display: "flex", gap: 2 }}>
+        {/* Tabs */}
+        <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", gap: "4px" }}>
           {TABS.map((t) => (
-            <button key={t} onClick={() => setTab(t)} style={{
-              ...ghost,
-              background:   tab === t ? "#21262D" : "transparent",
-              color:        tab === t ? C.text    : C.muted,
-              borderColor:  tab === t ? C.dim     : "transparent",
-              padding: "5px 14px", fontSize: 13, fontWeight: 500,
-              textTransform: "capitalize",
-            }}>{t}</button>
+            <button key={t.id} onClick={() => setTab(t.id)} style={{
+              background: "transparent", border: "none", cursor: "pointer",
+              padding: "10px 16px", fontSize: "14px", fontWeight: 600,
+              color: tab === t.id ? "#F1F5F9" : "#64748B",
+              borderBottom: tab === t.id ? "2px solid #1D6AC5" : "2px solid transparent",
+              transition: "all 0.15s",
+            }}>{t.label}</button>
           ))}
         </div>
       </div>
 
       {/* Content */}
-      <div style={{ padding: "20px 24px", maxWidth: 1100, margin: "0 auto" }}>
-        {tab === "topics"   && <TopicsTab   topics={topics} members={members} onAdd={openAdd} onEdit={openEdit} onDelete={deleteTopic} />}
-        {tab === "team"     && <TeamTab     members={members} setMembers={setMembers} vacation={vacation} setVacation={setVacation} />}
-        {tab === "capacity" && <CapacityTab capacities={capacities} topics={topics} members={members} />}
-        {tab === "timeline" && <TimelineTab timelineTopics={timelineTopics} members={members} onUpdateTopicDate={updateTopicDate} />}
+      <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "28px 32px" }}>
+        {tab === "topics"   && <TopicsTab   topics={topics} members={members} onAdd={addTopic} onEdit={editTopic} onDelete={deleteTopic} />}
+        {tab === "team"     && <TeamTab     members={members} vacation={vacation} onVacationChange={setVac} />}
+        {tab === "capacity" && <CapacityTab topics={topics} members={members} vacation={vacation} />}
+        {tab === "timeline" && <TimelineTab topics={topics} members={members} onUpdateDevStartDate={updateDevStartDate} />}
       </div>
-
-      {/* Modal */}
-      {showForm && (
-        <TopicFormModal
-          form={form} setForm={setForm} members={members}
-          onSave={saveTopic} onClose={() => setShowForm(false)}
-          isEdit={!!editId}
-        />
-      )}
     </div>
   );
 }
