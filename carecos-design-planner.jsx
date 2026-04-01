@@ -24,11 +24,12 @@ function loadInitialState() {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const SIZES = {
-  XS: { days: 1,  hours: "0–4h",  weeks: 0.2, color: "#059669" },
-  S:  { days: 3,  hours: "12h",   weeks: 0.6, color: "#2563EB" },
-  M:  { days: 5,  hours: "20h",   weeks: 1,   color: "#D97706" },
-  L:  { days: 10, hours: "40h",   weeks: 2,   color: "#EA580C" },
-  XL: { days: 20, hours: "80h+",  weeks: 4,   color: "#DC2626" },
+  XS:  { days: 1,  hours: "0–4h",  weeks: 0.2, color: "#059669" },
+  S:   { days: 3,  hours: "12h",   weeks: 0.6, color: "#2563EB" },
+  M:   { days: 5,  hours: "20h",   weeks: 1,   color: "#D97706" },
+  L:   { days: 10, hours: "40h",   weeks: 2,   color: "#EA580C" },
+  XL:  { days: 20, hours: "80h+",  weeks: 4,   color: "#DC2626" },
+  XXL: { days: 40, hours: "160h+", weeks: 8,   color: "#7C3AED" },
 };
 
 const TEAMS = ["CareCo", "PHNX", "NEMO", "KITN"];
@@ -102,9 +103,11 @@ const INIT_MEMBERS = [
 ];
 
 const EMPTY_FORM = {
-  title: "", team: "CareCo", type: "discovery", size: "M",
-  priority: false, ownerId: "m1", ownerPercent: 100,
-  supporterId: "", supporterPercent: 0, startDate: "2026-04-01",
+  title: "", description: "", team: "CareCo", type: "discovery", size: "M",
+  priority: false, ownerId: "", ownerPercent: 100,
+  supporter1Id: "", supporter1Percent: 0,
+  supporter2Id: "", supporter2Percent: 0,
+  startDate: "2026-04-01",
 };
 
 // ─── Micro styles ─────────────────────────────────────────────────────────────
@@ -223,11 +226,14 @@ function TopicsTab({ topics, members, onAdd, onEdit, onDelete }) {
         </div>
       )}
       {filtered.map((t) => {
-        const owner     = members.find((m) => m.id === t.ownerId);
-        const supporter = members.find((m) => m.id === t.supporterId);
-        const sz        = SIZES[t.size];
-        const ownerDays = t.supporterId ? (sz.days * t.ownerPercent / 100) : sz.days;
-        const suppDays  = supporter ? sz.days * t.supporterPercent / 100 : 0;
+        const owner      = members.find((m) => m.id === t.ownerId);
+        const supporter1 = members.find((m) => m.id === t.supporter1Id);
+        const supporter2 = members.find((m) => m.id === t.supporter2Id);
+        const sz         = SIZES[t.size];
+        const hasSupp    = !!(t.supporter1Id || t.supporter2Id);
+        const ownerDays  = hasSupp ? (sz.days * t.ownerPercent / 100) : sz.days;
+        const supp1Days  = supporter1 ? sz.days * t.supporter1Percent / 100 : 0;
+        const supp2Days  = supporter2 ? sz.days * t.supporter2Percent / 100 : 0;
         return (
           <div key={t.id} style={{
             ...card,
@@ -242,20 +248,34 @@ function TopicsTab({ topics, members, onAdd, onEdit, onDelete }) {
                   <Badge label={t.team} color={TEAM_COLORS[t.team]} />
                   <Badge label={t.type} color={C.dim} />
                 </div>
+                {/* Description */}
+                {t.description && (
+                  <div style={{ fontSize: 12, color: C.muted, marginBottom: 7, fontStyle: "italic" }}>
+                    {t.description}
+                  </div>
+                )}
                 {/* Meta row */}
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <Badge label={`${t.size} · ${sz.hours} · ${sz.days}d`} color={sz.color} />
-                  {owner && (
+                  {owner ? (
                     <span style={{ fontSize: 12, color: C.muted }}>
                       <span style={{ color: owner.color }}>●</span>{" "}
                       {owner.name}
-                      {t.supporterId ? ` (${t.ownerPercent}% · ${ownerDays.toFixed(1)}d)` : ` (${ownerDays.toFixed(1)}d)`}
+                      {hasSupp ? ` (${t.ownerPercent}% · ${ownerDays.toFixed(1)}d)` : ` (${ownerDays.toFixed(1)}d)`}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 12, color: C.dim }}>— Unassigned —</span>
+                  )}
+                  {supporter1 && (
+                    <span style={{ fontSize: 12, color: C.muted }}>
+                      +{" "}<span style={{ color: supporter1.color }}>●</span>{" "}
+                      {supporter1.name} ({t.supporter1Percent}% · {supp1Days.toFixed(1)}d)
                     </span>
                   )}
-                  {supporter && (
+                  {supporter2 && (
                     <span style={{ fontSize: 12, color: C.muted }}>
-                      +{" "}<span style={{ color: supporter.color }}>●</span>{" "}
-                      {supporter.name} ({t.supporterPercent}% · {suppDays.toFixed(1)}d)
+                      +{" "}<span style={{ color: supporter2.color }}>●</span>{" "}
+                      {supporter2.name} ({t.supporter2Percent}% · {supp2Days.toFixed(1)}d)
                     </span>
                   )}
                   {t.startDate && (
@@ -405,7 +425,7 @@ function CapacityTab({ capacities, topics, members }) {
 
       {/* Per-person topic breakdown */}
       {capacities.map((c) => {
-        const myTopics = topics.filter((t) => t.ownerId === c.id || t.supporterId === c.id);
+        const myTopics = topics.filter((t) => t.ownerId === c.id || t.supporter1Id === c.id || t.supporter2Id === c.id);
         if (!myTopics.length) return null;
         return (
           <div key={c.id} style={{ ...card, marginBottom: 12 }}>
@@ -415,7 +435,13 @@ function CapacityTab({ capacities, topics, members }) {
             </div>
             {myTopics.map((t) => {
               const isOwner = t.ownerId === c.id;
-              const pct     = isOwner ? (t.supporterId ? t.ownerPercent / 100 : 1) : t.supporterPercent / 100;
+              const isSupp1 = t.supporter1Id === c.id;
+              const hasSupp = !!(t.supporter1Id || t.supporter2Id);
+              const pct     = isOwner
+                ? (hasSupp ? t.ownerPercent / 100 : 1)
+                : isSupp1
+                  ? t.supporter1Percent / 100
+                  : t.supporter2Percent / 100;
               const days    = SIZES[t.size].days * pct;
               return (
                 <div key={t.id} style={{
@@ -433,6 +459,7 @@ function CapacityTab({ capacities, topics, members }) {
                       {isOwner ? "Owner" : "Supporter"} · {days.toFixed(1)}d
                     </span>
                   </div>
+
                 </div>
               );
             })}
@@ -556,9 +583,12 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate }) {
           const left           = Math.max(0, startOff) / Q2_CAL_DAYS * 100;
           const width          = Math.min(dur, Q2_CAL_DAYS - Math.max(0, startOff)) / Q2_CAL_DAYS * 100;
           const owner          = members.find((x) => x.id === t.ownerId);
-          const supp           = t.supporterId ? members.find((x) => x.id === t.supporterId) : null;
-          const ownerFlex      = t.supporterId ? t.ownerPercent     : 100;
-          const suppFlex       = t.supporterId ? t.supporterPercent : 0;
+          const supp1          = t.supporter1Id ? members.find((x) => x.id === t.supporter1Id) : null;
+          const supp2          = t.supporter2Id ? members.find((x) => x.id === t.supporter2Id) : null;
+          const hasSupp        = !!(t.supporter1Id || t.supporter2Id);
+          const ownerFlex      = hasSupp ? t.ownerPercent      : 100;
+          const supp1Flex      = hasSupp ? t.supporter1Percent : 0;
+          const supp2Flex      = hasSupp ? t.supporter2Percent : 0;
 
           return (
             <div key={t.id} style={{ display: "flex", alignItems: "center", marginBottom: 5, minHeight: 38 }}>
@@ -571,8 +601,9 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate }) {
                 <div style={{ fontSize: 10, color: C.dim, display: "flex", gap: 5, alignItems: "center", marginTop: 1, flexWrap: "wrap" }}>
                   <span>{t.size}</span>
                   <span>·</span>
-                  {owner && <><span style={{ color: owner.color }}>●</span><span>{owner.name}</span></>}
-                  {supp  && <><span style={{ color: supp.color  }}>●</span><span>{supp.name} ({t.supporterPercent}%)</span></>}
+                  {owner ? <><span style={{ color: owner.color }}>●</span><span>{owner.name}</span></> : <span style={{ color: C.dim }}>Unassigned</span>}
+                  {supp1 && <><span style={{ color: supp1.color }}>●</span><span>{supp1.name} ({t.supporter1Percent}%)</span></>}
+                  {supp2 && <><span style={{ color: supp2.color }}>●</span><span>{supp2.name} ({t.supporter2Percent}%)</span></>}
                 </div>
               </div>
 
@@ -616,7 +647,7 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate }) {
                       opacity: isDragging ? 0.8 : 0.9,
                       cursor: isDragging ? "grabbing" : "grab",
                       boxSizing: "border-box",
-                      boxShadow: isDragging ? `0 0 0 2px ${owner?.color || "#fff"}, 0 4px 12px rgba(0,0,0,0.4)` : "none",
+                      boxShadow: isDragging ? `0 0 0 2px ${owner?.color || TEAM_COLORS[t.team] || "#fff"}, 0 4px 12px rgba(0,0,0,0.4)` : "none",
                     }}
                   >
                     {/* Owner segment — always present */}
@@ -631,13 +662,23 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate }) {
                       </span>
                     </div>
 
-                    {/* Supporter segment — only if a supporter is assigned */}
-                    {supp && suppFlex > 0 && (
+                    {/* Supporter 1 segment */}
+                    {supp1 && supp1Flex > 0 && (
                       <div style={{
-                        flex: suppFlex,
-                        background: supp.color,
-                        minWidth: suppFlex >= 15 ? 4 : 0,
+                        flex: supp1Flex,
+                        background: supp1.color,
+                        minWidth: supp1Flex >= 15 ? 4 : 0,
                         opacity: 0.9,
+                      }} />
+                    )}
+
+                    {/* Supporter 2 segment */}
+                    {supp2 && supp2Flex > 0 && (
+                      <div style={{
+                        flex: supp2Flex,
+                        background: supp2.color,
+                        minWidth: supp2Flex >= 15 ? 4 : 0,
+                        opacity: 0.75,
                       }} />
                     )}
                   </div>
@@ -693,8 +734,10 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate }) {
 
 function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
   const set = (key, val) => setForm((p) => ({ ...p, [key]: val }));
-  const hasSupporter = !!form.supporterId;
-  const totalPct     = hasSupporter ? form.ownerPercent + form.supporterPercent : 100;
+  const hasSupp1 = !!form.supporter1Id;
+  const hasSupp2 = !!form.supporter2Id;
+  const hasAnySupp = hasSupp1 || hasSupp2;
+  const totalPct = form.ownerPercent + (hasSupp1 ? form.supporter1Percent : 0) + (hasSupp2 ? form.supporter2Percent : 0);
 
   return (
     <div style={{
@@ -721,6 +764,17 @@ function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
             style={inp} value={form.title} autoFocus
             onChange={(e) => set("title", e.target.value)}
             placeholder="e.g. PHNX appointment flow redesign"
+          />
+        </div>
+
+        {/* Description */}
+        <div style={{ marginBottom: 14 }}>
+          <label style={lbl}>Description (optional)</label>
+          <textarea
+            style={{ ...inp, height: 64, resize: "vertical", lineHeight: 1.5 }}
+            value={form.description || ""}
+            onChange={(e) => set("description", e.target.value)}
+            placeholder="Goals, context, or notes…"
           />
         </div>
 
@@ -790,64 +844,89 @@ function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
           <div style={{ flex: 2 }}>
             <label style={lbl}>Owner</label>
             <select style={inp} value={form.ownerId} onChange={(e) => set("ownerId", e.target.value)}>
+              <option value="">— Unassigned —</option>
               {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             </select>
           </div>
-          {hasSupporter && (
+          {hasAnySupp && (
             <div style={{ width: 100 }}>
               <label style={lbl}>Owner %</label>
               <input
                 type="number" min={0} max={100} style={inp}
                 value={form.ownerPercent}
-                onChange={(e) => {
-                  const v = Math.min(100, Math.max(0, parseInt(e.target.value) || 0));
-                  set("ownerPercent", v);
-                  set("supporterPercent", 100 - v);
-                }}
+                onChange={(e) => set("ownerPercent", Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
               />
             </div>
           )}
         </div>
 
-        {/* Supporter */}
-        <div style={{ display: "flex", gap: 12, marginBottom: 14, alignItems: "flex-end" }}>
+        {/* Supporter 1 */}
+        <div style={{ display: "flex", gap: 12, marginBottom: 8, alignItems: "flex-end" }}>
           <div style={{ flex: 2 }}>
-            <label style={lbl}>Supporter (optional)</label>
+            <label style={lbl}>Supporter 1 (optional)</label>
             <select
-              style={inp} value={form.supporterId}
+              style={inp} value={form.supporter1Id}
               onChange={(e) => {
                 const val = e.target.value;
-                set("supporterId", val);
-                if (val) { set("ownerPercent", 50); set("supporterPercent", 50); }
-                else      { set("ownerPercent", 100); set("supporterPercent", 0); }
+                set("supporter1Id", val);
+                if (val && !form.supporter2Id) { set("ownerPercent", 50); set("supporter1Percent", 50); set("supporter2Percent", 0); }
+                else if (!val) { set("supporter1Percent", 0); }
               }}
             >
               <option value="">— None —</option>
-              {members.filter((m) => m.id !== form.ownerId).map((m) => (
+              {members.filter((m) => m.id !== form.ownerId && m.id !== form.supporter2Id).map((m) => (
                 <option key={m.id} value={m.id}>{m.name}</option>
               ))}
             </select>
           </div>
-          {hasSupporter && (
+          {hasSupp1 && (
             <div style={{ width: 100 }}>
-              <label style={lbl}>Supporter %</label>
+              <label style={lbl}>Supporter 1 %</label>
               <input
                 type="number" min={0} max={100} style={inp}
-                value={form.supporterPercent}
-                onChange={(e) => {
-                  const v = Math.min(100, Math.max(0, parseInt(e.target.value) || 0));
-                  set("supporterPercent", v);
-                  set("ownerPercent", 100 - v);
-                }}
+                value={form.supporter1Percent}
+                onChange={(e) => set("supporter1Percent", Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Supporter 2 */}
+        <div style={{ display: "flex", gap: 12, marginBottom: 14, alignItems: "flex-end" }}>
+          <div style={{ flex: 2 }}>
+            <label style={lbl}>Supporter 2 (optional)</label>
+            <select
+              style={inp} value={form.supporter2Id}
+              onChange={(e) => {
+                const val = e.target.value;
+                set("supporter2Id", val);
+                if (val && !form.supporter1Id) { set("ownerPercent", 50); set("supporter2Percent", 50); set("supporter1Percent", 0); }
+                else if (val && form.supporter1Id) { set("ownerPercent", 34); set("supporter1Percent", 33); set("supporter2Percent", 33); }
+                else if (!val) { set("supporter2Percent", 0); }
+              }}
+            >
+              <option value="">— None —</option>
+              {members.filter((m) => m.id !== form.ownerId && m.id !== form.supporter1Id).map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </div>
+          {hasSupp2 && (
+            <div style={{ width: 100 }}>
+              <label style={lbl}>Supporter 2 %</label>
+              <input
+                type="number" min={0} max={100} style={inp}
+                value={form.supporter2Percent}
+                onChange={(e) => set("supporter2Percent", Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
               />
             </div>
           )}
         </div>
 
         {/* % warning */}
-        {hasSupporter && totalPct !== 100 && (
+        {hasAnySupp && totalPct !== 100 && (
           <div style={{ fontSize: 12, color: "#D29922", marginBottom: 12 }}>
-            ⚠ Owner + Supporter percentages should total 100% (currently {totalPct}%)
+            ⚠ Percentages should total 100% (currently {totalPct}%)
           </div>
         )}
 
@@ -903,7 +982,7 @@ export default function App() {
     });
   }, [topics, members, vacation]);
 
-  const openAdd  = () => { setForm({ ...EMPTY_FORM, ownerId: members[0]?.id || "m1" }); setEditId(null); setShowForm(true); };
+  const openAdd  = () => { setForm({ ...EMPTY_FORM }); setEditId(null); setShowForm(true); };
   const openEdit = (t) => { setForm({ ...t }); setEditId(t.id); setShowForm(true); };
 
   const saveTopic = () => {
@@ -928,11 +1007,15 @@ export default function App() {
       const availableDays = Q2_WORKING_DAYS - (vacation[m.id] || 0);
       const allocatedDays = topics.reduce((sum, t) => {
         const sd = SIZES[t.size]?.days || 0;
+        const hasSupp = !!(t.supporter1Id || t.supporter2Id);
         if (t.ownerId === m.id) {
-          return sum + sd * (t.supporterId ? t.ownerPercent / 100 : 1);
+          return sum + sd * (hasSupp ? t.ownerPercent / 100 : 1);
         }
-        if (t.supporterId === m.id) {
-          return sum + sd * (t.supporterPercent / 100);
+        if (t.supporter1Id === m.id) {
+          return sum + sd * (t.supporter1Percent / 100);
+        }
+        if (t.supporter2Id === m.id) {
+          return sum + sd * (t.supporter2Percent / 100);
         }
         return sum;
       }, 0);
