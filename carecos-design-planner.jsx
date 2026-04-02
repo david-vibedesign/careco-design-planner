@@ -203,6 +203,71 @@ const makeEmptyForm = () => ({
   startDate: todayStr(),
 });
 
+// ─── Jira integration ─────────────────────────────────────────────────────────
+
+const JIRA_CLOUD_ID   = "41c6d4d4-71fb-44e1-8074-4ff9d5f73490";
+const JIRA_PROJECT    = "PDP";
+const JIRA_PROJECT_ID = "11993";
+const JIRA_EPIC_TYPE  = "10000";
+const JIRA_CONFIG_KEY = "careco-jira-config";
+
+// Pre-discovered field IDs (PDP project, Epic issue type)
+const JF = {
+  tempoTeam:     "customfield_10911",
+  startDate:     "customfield_10929",
+  category:      "customfield_11292",
+  featureTeam:   "customfield_12237",
+  domain:        "customfield_12263",
+  collaborators: "customfield_12282",
+};
+
+// Static option IDs
+const JIRA_OPTS = {
+  tempoTeamCareCo:   28,
+  categoryCareCo:    "20030",
+  domainCareCo:      "17813",
+  featureTeam: { PHNX: "19500", NEMO: "57346", KITN: "19499" },
+};
+
+function loadJiraConfig() {
+  try { return JSON.parse(localStorage.getItem(JIRA_CONFIG_KEY)) || null; } catch { return null; }
+}
+function saveJiraConfig(cfg) {
+  try { localStorage.setItem(JIRA_CONFIG_KEY, JSON.stringify(cfg)); } catch {}
+}
+
+async function jiraApi(path, cfg, opts = {}) {
+  const auth = btoa(`${cfg.email}:${cfg.apiToken}`);
+  const base = `https://${cfg.domain}/rest/api/3`;
+  const res = await fetch(`${base}${path}`, {
+    ...opts,
+    headers: {
+      Authorization: `Basic ${auth}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...opts.headers,
+    },
+  });
+  if (!res.ok) { const t = await res.text(); throw new Error(`Jira ${res.status}: ${t}`); }
+  return res.json();
+}
+
+async function lookupJiraAccountId(name, cfg) {
+  if (!name) return null;
+  try {
+    const r = await jiraApi(`/user/search?query=${encodeURIComponent(name)}&maxResults=3`, cfg, { method: "GET" });
+    return r?.[0]?.accountId ?? null;
+  } catch { return null; }
+}
+
+async function searchJiraInitiatives(title, cfg) {
+  try {
+    const jql = `project = ${JIRA_PROJECT} AND issuetype = Initiative ORDER BY created DESC`;
+    const r = await jiraApi(`/search?jql=${encodeURIComponent(jql)}&maxResults=8&fields=summary,key`, cfg, { method: "GET" });
+    return r?.issues ?? [];
+  } catch { return []; }
+}
+
 // ─── Theme ────────────────────────────────────────────────────────────────────
 
 const C = {
@@ -375,9 +440,181 @@ function DeleteConfirm({ title, onConfirm, onCancel }) {
   );
 }
 
+// ─── JiraSetupModal ───────────────────────────────────────────────────────────
+
+function JiraSetupModal({ onSave, onClose }) {
+  const [domain,   setDomain]   = useState("doctolib.atlassian.net");
+  const [email,    setEmail]    = useState("");
+  const [apiToken, setApiToken] = useState("");
+  const [testing,  setTesting]  = useState(false);
+  const [err,      setErr]      = useState(null);
+
+  const test = async () => {
+    setTesting(true); setErr(null);
+    try {
+      await jiraApi("/myself", { domain, email, apiToken }, { method: "GET" });
+      const cfg = { domain, email, apiToken };
+      saveJiraConfig(cfg);
+      onSave(cfg);
+    } catch (e) {
+      setErr(e.message.includes("401") ? "Invalid email or API token." : e.message.includes("Failed to fetch") ? "Could not reach Jira — check your domain and that your browser allows cross-origin requests." : e.message);
+    } finally { setTesting(false); }
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300, padding:16 }}>
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:28, width:"100%", maxWidth:480 }}>
+        <div style={{ fontWeight:700, fontSize:16, color:C.title, fontFamily:FONT_TITLE, marginBottom:6 }}>Connect Jira</div>
+        <div style={{ fontSize:12, color:C.muted, marginBottom:20 }}>One-time setup — saved to your browser. Generate an API token at <strong>id.atlassian.net → Security → API tokens</strong>.</div>
+
+        <div style={{ marginBottom:12 }}>
+          <label style={lbl}>Jira Domain</label>
+          <input style={inp} value={domain} onChange={e=>setDomain(e.target.value)} placeholder="yourcompany.atlassian.net" />
+        </div>
+        <div style={{ marginBottom:12 }}>
+          <label style={lbl}>Your Atlassian Email</label>
+          <input style={inp} value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@company.com" />
+        </div>
+        <div style={{ marginBottom:16 }}>
+          <label style={lbl}>API Token</label>
+          <input style={inp} type="password" value={apiToken} onChange={e=>setApiToken(e.target.value)} placeholder="ATATTxxxx…" />
+        </div>
+
+        {err && <div style={{ fontSize:12, color:C.red, marginBottom:12, padding:"8px 12px", background:`color-mix(in srgb, ${C.red} 10%, transparent)`, borderRadius:6 }}>{err}</div>}
+
+        <div style={{ display:"flex", gap:8, justifyContent:"flex-end", borderTop:`1px solid ${C.border}`, paddingTop:16 }}>
+          <button onClick={onClose} style={{ ...ghost, padding:"7px 16px" }}>Cancel</button>
+          <button onClick={test} disabled={!domain||!email||!apiToken||testing}
+            style={{ ...btn("#107ACA"), padding:"7px 20px", opacity:(!domain||!email||!apiToken||testing)?0.5:1 }}>
+            {testing ? "Testing…" : "Save & Connect"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── JiraReviewModal ──────────────────────────────────────────────────────────
+
+function JiraReviewModal({ topic, members, jiraConfig, onClose, onCreated }) {
+  const owner      = members.find(m => m.id === topic.ownerId);
+  const supporter1 = members.find(m => m.id === topic.supporter1Id);
+  const supporter2 = members.find(m => m.id === topic.supporter2Id);
+  const sz         = SIZES[topic.size];
+  const endDate    = topic.startDate ? fmt(addWorkingDays(topic.startDate, sz.days)) : null;
+  const label      = topic.type === "discovery" ? "Discovery" : "Design";
+  const featureTeamId = JIRA_OPTS.featureTeam[topic.team] ?? null;
+
+  const [initiatives, setInitiatives] = useState([]);
+  const [parentId,    setParentId]    = useState("");
+  const [creating,    setCreating]    = useState(false);
+  const [err,         setErr]         = useState(null);
+  const [loadingParents, setLoadingParents] = useState(true);
+
+  useEffect(() => {
+    searchJiraInitiatives(topic.title, jiraConfig).then(list => {
+      setInitiatives(list);
+      if (list.length > 0) setParentId(list[0].id);
+      setLoadingParents(false);
+    });
+  }, []);
+
+  const Field = ({ label: fl, value, dim }) => (
+    <div style={{ display:"flex", gap:0, marginBottom:8, fontSize:13 }}>
+      <span style={{ width:160, flexShrink:0, color:C.muted, fontSize:12 }}>{fl}</span>
+      <span style={{ color: dim ? C.dim : C.text }}>{value || <span style={{color:C.dim}}>—</span>}</span>
+    </div>
+  );
+
+  const create = async () => {
+    setCreating(true); setErr(null);
+    try {
+      // Resolve account IDs
+      const assigneeId     = await lookupJiraAccountId(owner?.name, jiraConfig);
+      const collabIds      = (await Promise.all(
+        [supporter1, supporter2].filter(Boolean).map(s => lookupJiraAccountId(s.name, jiraConfig))
+      )).filter(Boolean);
+
+      const body = {
+        fields: {
+          project:    { id: JIRA_PROJECT_ID },
+          issuetype:  { id: JIRA_EPIC_TYPE },
+          summary:    topic.title,
+          labels:     [label],
+          [JF.domain]:        { id: JIRA_OPTS.domainCareCo },
+          [JF.category]:      { id: JIRA_OPTS.categoryCareCo },
+          [JF.tempoTeam]:     { id: JIRA_OPTS.tempoTeamCareCo },
+        },
+      };
+
+      if (topic.description)  body.fields.description = { type:"doc", version:1, content:[{ type:"paragraph", content:[{ type:"text", text:topic.description }] }] };
+      if (assigneeId)         body.fields.assignee     = { id: assigneeId };
+      if (collabIds.length)   body.fields[JF.collaborators] = collabIds.map(id => ({ id }));
+      if (topic.startDate)    body.fields[JF.startDate]  = topic.startDate;
+      if (endDate)            body.fields.duedate         = endDate;
+      if (featureTeamId)      body.fields[JF.featureTeam] = { id: featureTeamId };
+      if (parentId)           body.fields.parent          = { id: parentId };
+
+      const result = await jiraApi("/issue", jiraConfig, { method:"POST", body: JSON.stringify(body) });
+      const url = `https://${jiraConfig.domain}/browse/${result.key}`;
+      window.open(url, "_blank");
+      onCreated(topic.id, result.key, url);
+    } catch(e) {
+      setErr(e.message);
+    } finally { setCreating(false); }
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300, padding:16 }}>
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:24, width:"100%", maxWidth:560, maxHeight:"90vh", overflowY:"auto" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:20 }}>
+          <span style={{ fontSize:18 }}>⚡</span>
+          <div style={{ fontWeight:700, fontSize:16, color:C.title, fontFamily:FONT_TITLE }}>Create Jira Epic</div>
+          <div style={{ marginLeft:"auto", fontSize:11, color:C.dim, background:C.surfaceAlt, padding:"2px 8px", borderRadius:4 }}>PDP · Epic · BACKLOG</div>
+        </div>
+
+        <div style={{ ...card, marginBottom:16, padding:"14px 16px" }}>
+          <Field label="Summary"     value={topic.title} />
+          <Field label="Description" value={topic.description} dim={!topic.description} />
+          <Field label="Assignee"    value={owner?.name} />
+          <Field label="Collaborators" value={[supporter1, supporter2].filter(Boolean).map(s=>s.name).join(", ")} dim={!supporter1&&!supporter2} />
+          <Field label="Labels"      value={label} />
+          <Field label="Start date"  value={topic.startDate} />
+          <Field label="Due date"    value={endDate} />
+          <Field label="Feature Team" value={topic.team === "CareCo" ? "— (cross-domain)" : topic.team} dim={topic.team === "CareCo"} />
+          <Field label="Domain"      value="CARE COOPERATION" />
+          <Field label="Category"    value="CARE COOPERATION" />
+          <Field label="Tempo Team"  value="DESIGN - Cooperative Care" />
+        </div>
+
+        <div style={{ marginBottom:16 }}>
+          <label style={lbl}>Parent Initiative {loadingParents ? "(loading…)" : `(${initiatives.length} found)`}</label>
+          <select style={selInp} value={parentId} onChange={e=>setParentId(e.target.value)} disabled={loadingParents}>
+            <option value="">— No parent —</option>
+            {initiatives.map(i => (
+              <option key={i.id} value={i.id}>{i.key} · {i.fields?.summary}</option>
+            ))}
+          </select>
+          <div style={{ fontSize:11, color:C.dim, marginTop:4 }}>You can change this in Jira after creation.</div>
+        </div>
+
+        {err && <div style={{ fontSize:12, color:C.red, marginBottom:12, padding:"8px 12px", background:`color-mix(in srgb, ${C.red} 10%, transparent)`, borderRadius:6 }}>{err}</div>}
+
+        <div style={{ display:"flex", gap:8, justifyContent:"flex-end", borderTop:`1px solid ${C.border}`, paddingTop:16 }}>
+          <button onClick={onClose} style={{ ...ghost, padding:"7px 16px" }}>Cancel</button>
+          <button onClick={create} disabled={creating}
+            style={{ background:"#107ACA", color:"#fff", border:"none", borderRadius:999, padding:"9px 22px", fontSize:14, fontWeight:700, fontFamily:FONT_TITLE, cursor:creating?"wait":"pointer", opacity:creating?0.6:1, display:"flex", alignItems:"center", gap:6 }}>
+            {creating ? "Creating…" : "⚡ Create Epic in Jira"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── TopicsTab ────────────────────────────────────────────────────────────────
 
-function TopicsTab({ topics, members, onAdd, onEdit, onDelete }) {
+function TopicsTab({ topics, members, onAdd, onEdit, onDelete, onJira }) {
   const [filter, setFilter]               = useState("all");
   const [sizeFilter, setSizeFilter]       = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
@@ -514,6 +751,15 @@ function TopicsTab({ topics, members, onAdd, onEdit, onDelete }) {
                 />
               ) : (
                 <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  <button
+                    onClick={() => onJira(t)}
+                    title={t.jiraKey ? `View ${t.jiraKey} in Jira` : "Create Jira Epic"}
+                    style={{ ...ghost, padding: "4px 10px", fontSize: 12, display:"flex", alignItems:"center", gap:4,
+                      color: t.jiraKey ? "#0369A1" : C.muted,
+                      borderColor: t.jiraKey ? "color-mix(in srgb, #0369A1 40%, transparent)" : C.border,
+                    }}>
+                    {t.jiraKey ? `⚡ ${t.jiraKey}` : "⚡ Jira"}
+                  </button>
                   <button onClick={() => onEdit(t)} style={{ ...ghost, padding: "4px 10px" }}>Edit</button>
                   <button
                     onClick={() => setConfirmDeleteId(t.id)}
@@ -1288,6 +1534,10 @@ export default function App() {
   const [editId,   setEditId]   = useState(null);
   const [form,     setForm]     = useState(makeEmptyForm);
 
+  const [jiraConfig,     setJiraConfig]     = useState(() => loadJiraConfig());
+  const [showJiraSetup,  setShowJiraSetup]  = useState(false);
+  const [jiraReviewTopic, setJiraReviewTopic] = useState(null);
+
   // Quarter-derived values
   const { year, q }    = quarter;
   const qWorkingDays   = useMemo(() => getQuarterWorkingDays(year, q), [year, q]);
@@ -1332,6 +1582,16 @@ export default function App() {
   const updateTopicDate = useCallback((id, newDate) => {
     setTopics((ts) => ts.map((t) => (t.id === id ? { ...t, startDate: newDate } : t)));
   }, []);
+
+  const handleJiraCreated = useCallback((topicId, jiraKey, jiraUrl) => {
+    setTopics(ts => ts.map(t => t.id === topicId ? { ...t, jiraKey, jiraUrl } : t));
+    setJiraReviewTopic(null);
+  }, []);
+
+  const openJiraCreate = (topic) => {
+    if (!jiraConfig) { setShowJiraSetup(true); }
+    else { setJiraReviewTopic(topic); }
+  };
 
   // Capacity
   const capacities = useMemo(() => {
@@ -1394,7 +1654,7 @@ export default function App() {
 
       {/* Content */}
       <div style={{ padding: "20px 24px", maxWidth: 1100, margin: "0 auto" }}>
-        {tab === "topics"   && <TopicsTab   topics={topics} members={members} onAdd={openAdd} onEdit={openEdit} onDelete={deleteTopic} />}
+        {tab === "topics"   && <TopicsTab   topics={topics} members={members} onAdd={openAdd} onEdit={openEdit} onDelete={deleteTopic} onJira={openJiraCreate} />}
         {tab === "team"     && <TeamTab     members={members} setMembers={setMembers} vacation={vacation} setVacation={setVacation} qWorkingDays={qWorkingDays} qLabel={qLabel} qHolidays={qHolidays} />}
         {tab === "capacity" && <CapacityTab capacities={capacities} topics={topics} members={members} onEdit={openEdit} qWorkingDays={qWorkingDays} qLabel={qLabel} />}
         {tab === "timeline" && <TimelineTab timelineTopics={timelineTopics} members={members} onUpdateTopicDate={updateTopicDate} onEdit={openEdit}
@@ -1406,6 +1666,23 @@ export default function App() {
       {showForm && (
         <TopicFormModal form={form} setForm={setForm} members={members}
           onSave={saveTopic} onClose={() => setShowForm(false)} isEdit={!!editId} />
+      )}
+
+      {showJiraSetup && (
+        <JiraSetupModal
+          onSave={(cfg) => { setJiraConfig(cfg); setShowJiraSetup(false); }}
+          onClose={() => setShowJiraSetup(false)}
+        />
+      )}
+
+      {jiraReviewTopic && (
+        <JiraReviewModal
+          topic={jiraReviewTopic}
+          members={members}
+          jiraConfig={jiraConfig}
+          onClose={() => setJiraReviewTopic(null)}
+          onCreated={handleJiraCreated}
+        />
       )}
     </div>
   );
