@@ -5,7 +5,6 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 const STORAGE_KEY = "careco-planner-v1";
 
 function loadInitialState() {
-  // 1. Shared URL hash takes priority (colleague opened a share link)
   try {
     const hash = window.location.hash.slice(1);
     if (hash) {
@@ -13,7 +12,6 @@ function loadInitialState() {
       if (state?.topics) return state;
     }
   } catch {}
-  // 2. Fall back to localStorage (own saved session)
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) return JSON.parse(saved);
@@ -53,8 +51,8 @@ const NL_HOLIDAYS = [
 
 const holidaySet = new Set(NL_HOLIDAYS.map((h) => h.date));
 
-const Q2_START = new Date(2026, 3, 1);  // April 1
-const Q2_END   = new Date(2026, 5, 30); // June 30
+const Q2_START = new Date(2026, 3, 1);
+const Q2_END   = new Date(2026, 5, 30);
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
@@ -77,7 +75,6 @@ const getWorkingDaysBetween = (start, end) => {
   return count;
 };
 
-// Returns the last working day after `workingDays` days starting from startDate
 const addWorkingDays = (startDateStr, workingDays) => {
   const d = new Date(startDateStr);
   d.setHours(0, 0, 0, 0);
@@ -91,15 +88,15 @@ const addWorkingDays = (startDateStr, workingDays) => {
 
 const fmt = (d) => d.toISOString().split("T")[0];
 
-const Q2_WORKING_DAYS = getWorkingDaysBetween(Q2_START, Q2_END); // 60 days
+const Q2_WORKING_DAYS = getWorkingDaysBetween(Q2_START, Q2_END);
 
 // ─── Initial state ────────────────────────────────────────────────────────────
 
 const INIT_MEMBERS = [
-  { id: "m1", name: "Designer 1",    role: "Senior Product Designer",   color: "#A855F7" },
-  { id: "m2", name: "Designer 2",    role: "Senior Product Designer",   color: "#3B82F6" },
-  { id: "m3", name: "Researcher",    role: "User Researcher",           color: "#10B981" },
-  { id: "m4", name: "David Brandau", role: "Senior Design Team Manager",color: "#F97316" },
+  { id: "m1", name: "Designer 1",    role: "Senior Product Designer",    color: "#A855F7" },
+  { id: "m2", name: "Designer 2",    role: "Senior Product Designer",    color: "#3B82F6" },
+  { id: "m3", name: "Researcher",    role: "User Researcher",            color: "#10B981" },
+  { id: "m4", name: "David Brandau", role: "Senior Design Team Manager", color: "#F97316" },
 ];
 
 const EMPTY_FORM = {
@@ -110,38 +107,149 @@ const EMPTY_FORM = {
   startDate: "2026-04-01",
 };
 
-// ─── Micro styles ─────────────────────────────────────────────────────────────
+// ─── Theme ────────────────────────────────────────────────────────────────────
 
+// C references CSS custom properties — values update automatically when
+// data-theme attribute changes on the root element.
 const C = {
-  bg:      "#0D1117",
-  surface: "#161B22",
-  border:  "#30363D",
-  text:    "#E6EDF3",
-  muted:   "#8B949E",
-  dim:     "#484F58",
+  bg:         "var(--c-bg)",
+  surface:    "var(--c-surface)",
+  surfaceAlt: "var(--c-surface-alt)",
+  border:     "var(--c-border)",
+  text:       "var(--c-text)",
+  muted:      "var(--c-muted)",
+  dim:        "var(--c-dim)",
+  green:      "var(--c-green)",
+  red:        "var(--c-red)",
 };
 
+const THEME_CSS = `
+  /* ── CSS custom properties for both themes ── */
+  :root, [data-theme="dark"] {
+    --c-bg:          #0D1117;
+    --c-surface:     #161B22;
+    --c-surface-alt: #21262D;
+    --c-border:      #30363D;
+    --c-text:        #E6EDF3;
+    --c-muted:       #8B949E;
+    --c-dim:         #484F58;
+    --c-green:       #238636;
+    --c-red:         #F85149;
+    color-scheme: dark;
+  }
+  [data-theme="light"] {
+    --c-bg:          #F6F8FA;
+    --c-surface:     #FFFFFF;
+    --c-surface-alt: #EFF1F3;
+    --c-border:      #D0D7DE;
+    --c-text:        #1F2328;
+    --c-muted:       #57606A;
+    --c-dim:         #9198A1;
+    --c-green:       #1A7F37;
+    --c-red:         #CF222E;
+    color-scheme: light;
+  }
+
+  /* ── Smooth theme transition on all elements ── */
+  *, *::before, *::after {
+    transition:
+      background-color 0.28s ease,
+      border-color     0.28s ease,
+      color            0.28s ease,
+      box-shadow       0.28s ease;
+  }
+  /* Don't animate layout/transform properties */
+  *, *::before, *::after {
+    transition-property: background-color, border-color, color, box-shadow;
+  }
+
+  /* ── Toggle button ── */
+  .theme-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--c-border);
+    background: var(--c-surface-alt);
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--c-muted);
+    transition: border-color 0.2s, box-shadow 0.2s, background-color 0.28s;
+    user-select: none;
+    position: relative;
+    overflow: hidden;
+  }
+  .theme-toggle:hover {
+    border-color: var(--c-muted);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-muted) 15%, transparent);
+  }
+  .theme-toggle:active {
+    transform: scale(0.95);
+  }
+
+  /* ── Icon animation ── */
+  @keyframes icon-exit {
+    0%   { transform: rotate(0deg)   scale(1);   opacity: 1; }
+    100% { transform: rotate(-90deg) scale(0);   opacity: 0; }
+  }
+  @keyframes icon-enter {
+    0%   { transform: rotate(90deg)  scale(0);   opacity: 0; }
+    60%  { transform: rotate(-8deg)  scale(1.2); opacity: 1; }
+    80%  { transform: rotate(5deg)   scale(0.95);}
+    100% { transform: rotate(0deg)   scale(1);   opacity: 1; }
+  }
+  .icon-exiting { animation: icon-exit  0.2s ease forwards; }
+  .icon-entering { animation: icon-enter 0.35s ease forwards; }
+
+  /* ── Ripple flash on theme switch ── */
+  @keyframes theme-ripple {
+    0%   { transform: scale(0);   opacity: 0.35; }
+    100% { transform: scale(40);  opacity: 0; }
+  }
+  .theme-ripple {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--c-text);
+    pointer-events: none;
+    animation: theme-ripple 0.55s ease-out forwards;
+  }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 7px; height: 7px; }
+  ::-webkit-scrollbar-track { background: var(--c-bg); }
+  ::-webkit-scrollbar-thumb { background: var(--c-border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--c-dim); }
+
+  /* ── Input/Select/Textarea color-scheme ── */
+  input, select, textarea { color-scheme: inherit; }
+`;
+
+// ─── Style helpers (use CSS vars via C) ───────────────────────────────────────
+
 const card = {
-  background: C.surface,
-  border: `1px solid ${C.border}`,
+  background:   C.surface,
+  border:       `1px solid ${C.border}`,
   borderRadius: 8,
-  padding: 16,
+  padding:      16,
   marginBottom: 10,
 };
 
 const inp = {
-  background: C.bg,
-  border: `1px solid ${C.border}`,
+  background:  C.bg,
+  border:      `1px solid ${C.border}`,
   borderRadius: 6,
-  color: C.text,
-  padding: "6px 10px",
-  fontSize: 13,
-  width: "100%",
-  boxSizing: "border-box",
-  outline: "none",
+  color:       C.text,
+  padding:     "6px 10px",
+  fontSize:    13,
+  width:       "100%",
+  boxSizing:   "border-box",
+  outline:     "none",
 };
 
-const btn = (bg = "#238636", color = "#fff") => ({
+const btn = (bg = C.green, color = "#fff") => ({
   background: bg, color,
   border: "none", borderRadius: 6,
   padding: "7px 16px", fontSize: 13, fontWeight: 600,
@@ -149,10 +257,13 @@ const btn = (bg = "#238636", color = "#fff") => ({
 });
 
 const ghost = {
-  background: "transparent", color: C.muted,
-  border: `1px solid ${C.border}`,
-  borderRadius: 6, padding: "6px 12px",
-  fontSize: 12, cursor: "pointer",
+  background:   "transparent",
+  color:        C.muted,
+  border:       `1px solid ${C.border}`,
+  borderRadius: 6,
+  padding:      "6px 12px",
+  fontSize:     12,
+  cursor:       "pointer",
 };
 
 const lbl = { fontSize: 12, color: C.muted, marginBottom: 4, display: "block" };
@@ -161,14 +272,68 @@ const lbl = { fontSize: 12, color: C.muted, marginBottom: 4, display: "block" };
 
 const Badge = ({ label, color, small }) => (
   <span style={{
-    background: color + "22", color,
-    border: `1px solid ${color}44`,
+    background: `color-mix(in srgb, ${color} 15%, transparent)`,
+    color,
+    border:     `1px solid color-mix(in srgb, ${color} 30%, transparent)`,
     borderRadius: 4,
-    padding: small ? "1px 5px" : "2px 7px",
-    fontSize: small ? 10 : 11,
-    fontWeight: 600, whiteSpace: "nowrap",
+    padding:    small ? "1px 5px" : "2px 7px",
+    fontSize:   small ? 10 : 11,
+    fontWeight: 600,
+    whiteSpace: "nowrap",
   }}>{label}</span>
 );
+
+// ─── ThemeToggle ──────────────────────────────────────────────────────────────
+
+function ThemeToggle({ isDark, onToggle }) {
+  const [phase, setPhase] = useState("idle"); // idle | exiting | entering
+  const [ripple, setRipple] = useState(null);
+  const btnRef = useRef(null);
+
+  const handleClick = (e) => {
+    // Create ripple at click position
+    const rect = btnRef.current.getBoundingClientRect();
+    setRipple({ x: e.clientX - rect.left, y: e.clientY - rect.top, key: Date.now() });
+
+    // Phase 1: exit current icon
+    setPhase("exiting");
+    setTimeout(() => {
+      onToggle();         // swap theme
+      setPhase("entering");
+    }, 200);
+    setTimeout(() => setPhase("idle"), 600);
+    setTimeout(() => setRipple(null), 600);
+  };
+
+  const icon = isDark ? "☀️" : "🌙";
+
+  return (
+    <button
+      ref={btnRef}
+      className="theme-toggle"
+      onClick={handleClick}
+      title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+    >
+      {ripple && (
+        <span
+          key={ripple.key}
+          className="theme-ripple"
+          style={{ left: ripple.x - 10, top: ripple.y - 10 }}
+        />
+      )}
+      <span
+        className={
+          phase === "exiting"  ? "icon-exiting"  :
+          phase === "entering" ? "icon-entering" : ""
+        }
+        style={{ display: "inline-block", fontSize: 15, lineHeight: 1 }}
+      >
+        {icon}
+      </span>
+      <span style={{ fontSize: 12 }}>{isDark ? "Light" : "Dark"}</span>
+    </button>
+  );
+}
 
 // ─── TopicsTab ────────────────────────────────────────────────────────────────
 
@@ -190,9 +355,9 @@ function TopicsTab({ topics, members, onAdd, onEdit, onDelete }) {
           {filters.map((f) => (
             <button key={f} onClick={() => setFilter(f)} style={{
               ...ghost,
-              background: filter === f ? "#21262D" : "transparent",
-              color: filter === f ? C.text : C.muted,
-              borderColor: filter === f ? C.dim : C.border,
+              background:  filter === f ? C.surfaceAlt : "transparent",
+              color:       filter === f ? C.text       : C.muted,
+              borderColor: filter === f ? C.dim        : C.border,
               padding: "4px 10px",
             }}>{f}</button>
           ))}
@@ -290,7 +455,7 @@ function TopicsTab({ topics, members, onAdd, onEdit, onDelete }) {
               {/* Actions */}
               <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                 <button onClick={() => onEdit(t)} style={{ ...ghost, padding: "4px 10px" }}>Edit</button>
-                <button onClick={() => onDelete(t.id)} style={{ ...ghost, padding: "4px 10px", color: "#F85149", borderColor: "#F8514933" }}>✕</button>
+                <button onClick={() => onDelete(t.id)} style={{ ...ghost, padding: "4px 10px", color: C.red, borderColor: `color-mix(in srgb, ${C.red} 40%, transparent)` }}>✕</button>
               </div>
             </div>
           </div>
@@ -311,7 +476,7 @@ function TeamTab({ members, setMembers, vacation, setVacation }) {
   return (
     <div>
       {/* Q2 summary */}
-      <div style={{ ...card, background: "#0D1117", marginBottom: 16 }}>
+      <div style={{ ...card, background: C.bg, marginBottom: 16 }}>
         <div style={{ fontSize: 13, color: C.muted }}>
           Q2 2026 total working days (NL 🇳🇱):{" "}
           <strong style={{ color: C.text }}>{Q2_WORKING_DAYS} days</strong>
@@ -329,7 +494,7 @@ function TeamTab({ members, setMembers, vacation, setVacation }) {
             <div style={{ display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2, width: "100%" }}>
                 <div style={{ width: 10, height: 10, borderRadius: "50%", background: m.color, flexShrink: 0 }} />
-                <span style={{ fontWeight: 600, fontSize: 14 }}>{m.name}</span>
+                <span style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{m.name}</span>
                 <span style={{ fontSize: 12, color: C.muted }}>{m.role}</span>
               </div>
               <div style={{ flex: 2, minWidth: 160 }}>
@@ -354,7 +519,7 @@ function TeamTab({ members, setMembers, vacation, setVacation }) {
       })}
 
       {/* Holidays list */}
-      <div style={{ ...card, background: "#0D1117", marginTop: 6 }}>
+      <div style={{ ...card, background: C.bg, marginTop: 6 }}>
         <div style={{ fontSize: 12, color: C.dim, fontWeight: 600, marginBottom: 10 }}>
           🇳🇱 Netherlands Public Holidays Q2 2026
         </div>
@@ -384,12 +549,12 @@ function CapacityTab({ capacities, topics, members }) {
         {capacities.map((c) => {
           const pct  = c.availableDays > 0 ? Math.min(100, (c.allocatedDays / c.availableDays) * 100) : 0;
           const over = c.allocatedDays > c.availableDays;
-          const barColor = over ? "#F85149" : pct > 85 ? "#D29922" : c.color;
+          const barColor = over ? C.red : pct > 85 ? "#D29922" : c.color;
           return (
             <div key={c.id} style={{ ...card }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                 <div style={{ width: 10, height: 10, borderRadius: "50%", background: c.color }} />
-                <span style={{ fontWeight: 600, fontSize: 14 }}>{c.name}</span>
+                <span style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{c.name}</span>
               </div>
               <div style={{ fontSize: 12, color: C.muted, marginBottom: 14 }}>{c.role}</div>
 
@@ -397,7 +562,7 @@ function CapacityTab({ capacities, topics, members }) {
               <div style={{ marginBottom: 10 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.muted, marginBottom: 5 }}>
                   <span>Allocated</span>
-                  <span style={{ color: over ? "#F85149" : C.text, fontWeight: 600 }}>
+                  <span style={{ color: over ? C.red : C.text, fontWeight: 600 }}>
                     {c.allocatedDays.toFixed(1)} / {c.availableDays}d
                   </span>
                 </div>
@@ -412,7 +577,7 @@ function CapacityTab({ capacities, topics, members }) {
 
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
                 <span style={{ color: C.dim }}>Q2: {c.availableDays}d available</span>
-                <span style={{ color: over ? "#F85149" : "#3FB950", fontWeight: 600 }}>
+                <span style={{ color: over ? C.red : "#3FB950", fontWeight: 600 }}>
                   {over
                     ? `${(c.allocatedDays - c.availableDays).toFixed(1)}d over`
                     : `${c.remaining.toFixed(1)}d free`}
@@ -429,7 +594,7 @@ function CapacityTab({ capacities, topics, members }) {
         if (!myTopics.length) return null;
         return (
           <div key={c.id} style={{ ...card, marginBottom: 12 }}>
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, display: "flex", alignItems: "center", gap: 8, color: C.text }}>
               <div style={{ width: 8, height: 8, borderRadius: "50%", background: c.color }} />
               {c.name}'s Topics
             </div>
@@ -459,7 +624,6 @@ function CapacityTab({ capacities, topics, members }) {
                       {isOwner ? "Owner" : "Supporter"} · {days.toFixed(1)}d
                     </span>
                   </div>
-
                 </div>
               );
             })}
@@ -473,11 +637,11 @@ function CapacityTab({ capacities, topics, members }) {
 // ─── TimelineTab ──────────────────────────────────────────────────────────────
 
 function TimelineTab({ timelineTopics, members, onUpdateTopicDate }) {
-  const Q2_CAL_DAYS  = 91; // April 1 – June 30 inclusive
-  const trackAreaRef = useRef(null); // ref on the header months container = track width
-  const dragRef      = useRef(null); // { topicId, originX, originDate } — set on mousedown
-  const latestDrag   = useRef(null); // { topicId, newDate } — updated every mousemove
-  const [dragState, setDragState] = useState(null); // drives live preview
+  const Q2_CAL_DAYS  = 91;
+  const trackAreaRef = useRef(null);
+  const dragRef      = useRef(null);
+  const latestDrag   = useRef(null);
+  const [dragState, setDragState] = useState(null);
 
   const months = [
     { label: "April 2026", days: 30 },
@@ -500,13 +664,11 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate }) {
     return fmt(d);
   };
 
-  // Today line
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayOffset = dayOffset(fmt(today));
   const showToday = todayOffset >= 0 && todayOffset <= Q2_CAL_DAYS;
 
-  // ── Drag & drop ──────────────────────────────────────────────────────────────
   useEffect(() => {
     const onMouseMove = (e) => {
       if (!dragRef.current || !trackAreaRef.current) return;
@@ -601,7 +763,10 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate }) {
                 <div style={{ fontSize: 10, color: C.dim, display: "flex", gap: 5, alignItems: "center", marginTop: 1, flexWrap: "wrap" }}>
                   <span>{t.size}</span>
                   <span>·</span>
-                  {owner ? <><span style={{ color: owner.color }}>●</span><span>{owner.name}</span></> : <span style={{ color: C.dim }}>Unassigned</span>}
+                  {owner
+                    ? <><span style={{ color: owner.color }}>●</span><span>{owner.name}</span></>
+                    : <span style={{ color: C.dim }}>Unassigned</span>
+                  }
                   {supp1 && <><span style={{ color: supp1.color }}>●</span><span>{supp1.name} ({t.supporter1Percent}%)</span></>}
                   {supp2 && <><span style={{ color: supp2.color }}>●</span><span>{supp2.name} ({t.supporter2Percent}%)</span></>}
                 </div>
@@ -626,12 +791,12 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate }) {
                 {showToday && (
                   <div style={{
                     position: "absolute", left: `${todayOffset / Q2_CAL_DAYS * 100}%`,
-                    top: -4, bottom: -4, width: 2, background: "#F85149",
+                    top: -4, bottom: -4, width: 2, background: C.red,
                     borderRadius: 1, zIndex: 3, pointerEvents: "none",
                   }} />
                 )}
 
-                {/* ── Draggable bar (split-color for owner + supporter) ── */}
+                {/* Draggable bar */}
                 {startOff < Q2_CAL_DAYS && startOff + dur > 0 && (
                   <div
                     onMouseDown={(e) => handleBarMouseDown(e, t)}
@@ -647,10 +812,12 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate }) {
                       opacity: isDragging ? 0.8 : 0.9,
                       cursor: isDragging ? "grabbing" : "grab",
                       boxSizing: "border-box",
-                      boxShadow: isDragging ? `0 0 0 2px ${owner?.color || TEAM_COLORS[t.team] || "#fff"}, 0 4px 12px rgba(0,0,0,0.4)` : "none",
+                      boxShadow: isDragging
+                        ? `0 0 0 2px ${owner?.color || TEAM_COLORS[t.team] || "#fff"}, 0 4px 12px rgba(0,0,0,0.4)`
+                        : "none",
                     }}
                   >
-                    {/* Owner segment — always present */}
+                    {/* Owner segment */}
                     <div style={{
                       flex: ownerFlex,
                       background: owner?.color || TEAM_COLORS[t.team],
@@ -684,13 +851,13 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate }) {
                   </div>
                 )}
 
-                {/* Drag tooltip — new date label that follows the bar */}
+                {/* Drag tooltip */}
                 {isDragging && (
                   <div style={{
                     position: "absolute",
                     left: `${Math.min(left, 82)}%`,
                     bottom: "calc(100% + 4px)",
-                    background: "#21262D",
+                    background: C.surfaceAlt,
                     border: `1px solid ${owner?.color || C.border}`,
                     borderRadius: 4,
                     padding: "3px 8px",
@@ -717,7 +884,7 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate }) {
           ))}
           {showToday && (
             <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: C.muted }}>
-              <div style={{ width: 2, height: 12, background: "#F85149", borderRadius: 1 }} />
+              <div style={{ width: 2, height: 12, background: C.red, borderRadius: 1 }} />
               Today
             </div>
           )}
@@ -734,10 +901,10 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate }) {
 
 function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
   const set = (key, val) => setForm((p) => ({ ...p, [key]: val }));
-  const hasSupp1 = !!form.supporter1Id;
-  const hasSupp2 = !!form.supporter2Id;
+  const hasSupp1   = !!form.supporter1Id;
+  const hasSupp2   = !!form.supporter2Id;
   const hasAnySupp = hasSupp1 || hasSupp2;
-  const totalPct = form.ownerPercent + (hasSupp1 ? form.supporter1Percent : 0) + (hasSupp2 ? form.supporter2Percent : 0);
+  const totalPct   = form.ownerPercent + (hasSupp1 ? form.supporter1Percent : 0) + (hasSupp2 ? form.supporter2Percent : 0);
 
   return (
     <div style={{
@@ -951,35 +1118,44 @@ function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
 export default function App() {
   const [tab,     setTab]     = useState("topics");
   const [copied,  setCopied]  = useState(false);
+  const [isDark,  setIsDark]  = useState(true);
 
-  // Load from URL hash or localStorage on first render
-  const [_init]   = useState(() => loadInitialState());
-  const [members, setMembers] = useState(_init?.members || INIT_MEMBERS);
+  const [_init]    = useState(() => loadInitialState());
+  const [members,  setMembers]  = useState(_init?.members  || INIT_MEMBERS);
   const [vacation, setVacation] = useState(_init?.vacation || { m1: 0, m2: 0, m3: 0, m4: 0 });
-  const [topics,  setTopics]  = useState(_init?.topics   || []);
+  const [topics,   setTopics]   = useState(_init?.topics   || []);
 
   const [showForm, setShowForm] = useState(false);
   const [editId,   setEditId]   = useState(null);
-  const [form,    setForm]    = useState(EMPTY_FORM);
+  const [form,     setForm]     = useState(EMPTY_FORM);
 
-  // Auto-save to localStorage whenever data changes
+  // Persist to localStorage
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ topics, members, vacation }));
     } catch {}
   }, [topics, members, vacation]);
 
-  // Share button — encodes full state into URL hash and copies to clipboard
+  // Persist theme preference
+  useEffect(() => {
+    try { localStorage.setItem("careco-theme", isDark ? "dark" : "light"); } catch {}
+  }, [isDark]);
+
+  // Load theme preference
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("careco-theme");
+      if (saved === "light") setIsDark(false);
+    } catch {}
+  }, []);
+
   const handleShare = useCallback(() => {
     const encoded = btoa(JSON.stringify({ topics, members, vacation }));
     const url = `${window.location.href.split("#")[0]}#${encoded}`;
     navigator.clipboard.writeText(url).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
-    }).catch(() => {
-      // Fallback: put in address bar so user can copy manually
-      window.location.hash = encoded;
-    });
+    }).catch(() => { window.location.hash = encoded; });
   }, [topics, members, vacation]);
 
   const openAdd  = () => { setForm({ ...EMPTY_FORM }); setEditId(null); setShowForm(true); };
@@ -1008,15 +1184,9 @@ export default function App() {
       const allocatedDays = topics.reduce((sum, t) => {
         const sd = SIZES[t.size]?.days || 0;
         const hasSupp = !!(t.supporter1Id || t.supporter2Id);
-        if (t.ownerId === m.id) {
-          return sum + sd * (hasSupp ? t.ownerPercent / 100 : 1);
-        }
-        if (t.supporter1Id === m.id) {
-          return sum + sd * (t.supporter1Percent / 100);
-        }
-        if (t.supporter2Id === m.id) {
-          return sum + sd * (t.supporter2Percent / 100);
-        }
+        if (t.ownerId === m.id)       return sum + sd * (hasSupp ? t.ownerPercent / 100 : 1);
+        if (t.supporter1Id === m.id)  return sum + sd * (t.supporter1Percent / 100);
+        if (t.supporter2Id === m.id)  return sum + sd * (t.supporter2Percent / 100);
         return sum;
       }, 0);
       return { ...m, availableDays, allocatedDays, remaining: availableDays - allocatedDays };
@@ -1027,36 +1197,43 @@ export default function App() {
   const timelineTopics = useMemo(() => {
     return topics
       .filter((t) => t.startDate)
-      .map((t) => {
-        const endObj = addWorkingDays(t.startDate, SIZES[t.size]?.days || 5);
-        return { ...t, endObj };
-      })
+      .map((t) => ({ ...t, endObj: addWorkingDays(t.startDate, SIZES[t.size]?.days || 5) }))
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
   }, [topics]);
 
   const TABS = ["topics", "team", "capacity", "timeline"];
 
   return (
-    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", background: C.bg, minHeight: "100vh", color: C.text }}>
+    <div data-theme={isDark ? "dark" : "light"} style={{
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+      background: C.bg, minHeight: "100vh", color: C.text,
+    }}>
+      {/* Inject CSS custom properties + animations */}
+      <style>{THEME_CSS}</style>
+
       {/* Header */}
       <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "14px 24px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#F59E0B" }} />
-          <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: "-0.3px" }}>CareCo Design Planner</span>
+          <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: "-0.3px", color: C.text }}>CareCo Design Planner</span>
           <span style={{ fontSize: 12, color: C.dim, marginLeft: 2 }}>Q2 2026</span>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
             {["PHNX", "NEMO", "KITN"].map((t) => (
               <Badge key={t} label={t} color={TEAM_COLORS[t]} small />
             ))}
+
+            {/* Theme toggle */}
+            <ThemeToggle isDark={isDark} onToggle={() => setIsDark((d) => !d)} />
+
+            {/* Share */}
             <button
               onClick={handleShare}
               title="Copy a shareable link with your full plan encoded in the URL"
               style={{
-                ...btn(copied ? "#238636" : "#21262D", copied ? "#fff" : C.muted),
-                border: `1px solid ${copied ? "#238636" : C.border}`,
+                ...btn(copied ? C.green : C.surfaceAlt, copied ? "#fff" : C.muted),
+                border: `1px solid ${copied ? C.green : C.border}`,
                 padding: "5px 12px", fontSize: 12,
                 display: "flex", alignItems: "center", gap: 5,
-                transition: "all 0.2s",
               }}
             >
               {copied ? "✓ Link copied!" : "🔗 Share plan"}
@@ -1067,9 +1244,9 @@ export default function App() {
           {TABS.map((t) => (
             <button key={t} onClick={() => setTab(t)} style={{
               ...ghost,
-              background:   tab === t ? "#21262D" : "transparent",
-              color:        tab === t ? C.text    : C.muted,
-              borderColor:  tab === t ? C.dim     : "transparent",
+              background:   tab === t ? C.surfaceAlt : "transparent",
+              color:        tab === t ? C.text       : C.muted,
+              borderColor:  tab === t ? C.dim        : "transparent",
               padding: "5px 14px", fontSize: 13, fontWeight: 500,
               textTransform: "capitalize",
             }}>{t}</button>
