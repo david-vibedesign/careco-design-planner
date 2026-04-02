@@ -6,9 +6,10 @@ const STORAGE_KEY = "careco-planner-v1";
 
 function loadInitialState() {
   try {
-    const hash = window.location.hash.slice(1);
-    if (hash) {
-      const state = JSON.parse(atob(hash));
+    const params = new URLSearchParams(window.location.search);
+    const data = params.get("data") || window.location.hash.slice(1); // also supports old hash links
+    if (data) {
+      const state = JSON.parse(atob(data));
       if (state?.topics) return state;
     }
   } catch {}
@@ -203,15 +204,15 @@ const makeEmptyForm = () => ({
   startDate: todayStr(),
 });
 
-// ─── Jira integration ─────────────────────────────────────────────────────────
+// ─── Jira prompt generator ────────────────────────────────────────────────────
+// Generates a ready-to-paste Claude prompt for Epic creation.
+// No API token required — works for any team member via Cowork / Claude.ai.
 
-const JIRA_CLOUD_ID   = "41c6d4d4-71fb-44e1-8074-4ff9d5f73490";
 const JIRA_PROJECT    = "PDP";
 const JIRA_PROJECT_ID = "11993";
 const JIRA_EPIC_TYPE  = "10000";
-const JIRA_CONFIG_KEY = "careco-jira-config";
 
-// Pre-discovered field IDs (PDP project, Epic issue type)
+// Pre-discovered custom field IDs (PDP project, Epic issue type)
 const JF = {
   tempoTeam:     "customfield_10911",
   startDate:     "customfield_10929",
@@ -223,49 +224,55 @@ const JF = {
 
 // Static option IDs
 const JIRA_OPTS = {
-  tempoTeamCareCo:   28,
-  categoryCareCo:    "20030",
-  domainCareCo:      "17813",
+  tempoTeamCareCo: 28,
+  categoryCareCo:  "20030",
+  domainCareCo:    "17813",
   featureTeam: { PHNX: "19500", NEMO: "57346", KITN: "19499" },
 };
 
-function loadJiraConfig() {
-  try { return JSON.parse(localStorage.getItem(JIRA_CONFIG_KEY)) || null; } catch { return null; }
-}
-function saveJiraConfig(cfg) {
-  try { localStorage.setItem(JIRA_CONFIG_KEY, JSON.stringify(cfg)); } catch {}
-}
+const SIZE_POINTS = { XS: 1, S: 3, M: 5, L: 8, XL: 13, XXL: 21 };
 
-async function jiraApi(path, cfg, opts = {}) {
-  const auth = btoa(`${cfg.email}:${cfg.apiToken}`);
-  const base = `https://${cfg.domain}/rest/api/3`;
-  const res = await fetch(`${base}${path}`, {
-    ...opts,
-    headers: {
-      Authorization: `Basic ${auth}`,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...opts.headers,
-    },
-  });
-  if (!res.ok) { const t = await res.text(); throw new Error(`Jira ${res.status}: ${t}`); }
-  return res.json();
-}
+function generateJiraPrompt(topic, members) {
+  const owner      = members.find(m => m.id === topic.ownerId);
+  const supporter1 = members.find(m => m.id === topic.supporter1Id);
+  const supporter2 = members.find(m => m.id === topic.supporter2Id);
+  const sz         = SIZES[topic.size] || { days: "?" };
+  const points     = SIZE_POINTS[topic.size] ?? "?";
+  const endDate    = topic.startDate ? fmt(addWorkingDays(topic.startDate, sz.days)) : null;
+  const label      = topic.type === "discovery" ? "Discovery" : "Design";
+  const collabs    = [supporter1, supporter2].filter(Boolean).map(s => s.name).join(", ");
+  const ftId       = JIRA_OPTS.featureTeam[topic.team] ?? null;
 
-async function lookupJiraAccountId(name, cfg) {
-  if (!name) return null;
-  try {
-    const r = await jiraApi(`/user/search?query=${encodeURIComponent(name)}&maxResults=3`, cfg, { method: "GET" });
-    return r?.[0]?.accountId ?? null;
-  } catch { return null; }
-}
-
-async function searchJiraInitiatives(title, cfg) {
-  try {
-    const jql = `project = ${JIRA_PROJECT} AND issuetype = Initiative ORDER BY created DESC`;
-    const r = await jiraApi(`/search?jql=${encodeURIComponent(jql)}&maxResults=8&fields=summary,key`, cfg, { method: "GET" });
-    return r?.issues ?? [];
-  } catch { return []; }
+  return [
+    `Please create a Jira Epic in the PDP project on doctolib.atlassian.net with the details below.\n`,
+    `## Topic details`,
+    `- **Summary:** ${topic.title}`,
+    topic.description ? `- **Description:** ${topic.description}` : null,
+    `- **Label:** ${label}`,
+    `- **T-shirt size:** ${topic.size} → ${sz.days} working days, ~${points} story points`,
+    owner   ? `- **Assignee:** ${owner.name}`           : `- **Assignee:** (not set)`,
+    collabs ? `- **Collaborators:** ${collabs}`          : null,
+    topic.startDate ? `- **Start date:** ${topic.startDate}` : null,
+    endDate         ? `- **Due date:** ${endDate}`            : null,
+    `\n## Fixed CareCo fields — use exactly as listed`,
+    `- Jira site: doctolib.atlassian.net`,
+    `- Project: PDP (ID: ${JIRA_PROJECT_ID})`,
+    `- Issue type: Epic (ID: ${JIRA_EPIC_TYPE})`,
+    `- Domain → ${JF.domain}, option ID: ${JIRA_OPTS.domainCareCo} (CARE COOPERATION)`,
+    `- Category → ${JF.category}, option ID: ${JIRA_OPTS.categoryCareCo} (CARE COOPERATION)`,
+    `- Tempo Team → ${JF.tempoTeam}, value: ${JIRA_OPTS.tempoTeamCareCo} as a plain number/Long, not an object (DESIGN – Cooperative Care)`,
+    ftId
+      ? `- Feature Team → ${JF.featureTeam}, option ID: ${ftId} (${topic.team})`
+      : `- Feature Team → ${JF.featureTeam}: leave blank (topic spans multiple teams)`,
+    `\n## Steps to complete`,
+    ftId
+      ? `1. Search the **${topic.team}** Jira project for existing Initiatives to use as this Epic's parent (the parent lives on the feature team board, not in PDP). Show me the top results and let me pick one (or skip).`
+      : `1. This topic spans multiple teams — ask the user which feature team board (KITN, PHNX, or NEMO) to search for a parent Initiative, or skip if not needed.`,
+    `2. Look up the Atlassian account ID${collabs ? "s" : ""} for: ${[owner?.name, ...([supporter1, supporter2].filter(Boolean).map(s => s.name))].filter(Boolean).join(", ")}.`,
+    `3. Show me a summary of all fields you will set before creating.`,
+    `4. Create the Epic via the Jira REST API (POST /rest/api/3/issue on doctolib.atlassian.net).`,
+    `5. Return the new issue key (e.g. PDP-123) and a direct link to open it.`,
+  ].filter(Boolean).join("\n");
 }
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
@@ -440,172 +447,77 @@ function DeleteConfirm({ title, onConfirm, onCancel }) {
   );
 }
 
-// ─── JiraSetupModal ───────────────────────────────────────────────────────────
+// ─── JiraPromptModal ─────────────────────────────────────────────────────────
 
-function JiraSetupModal({ onSave, onClose }) {
-  const [domain,   setDomain]   = useState("doctolib.atlassian.net");
-  const [email,    setEmail]    = useState("");
-  const [apiToken, setApiToken] = useState("");
-  const [testing,  setTesting]  = useState(false);
-  const [err,      setErr]      = useState(null);
+function JiraPromptModal({ topic, prompt, onClose }) {
+  const [copied, setCopied] = useState(false);
+  const taRef = useRef(null);
 
-  const test = async () => {
-    setTesting(true); setErr(null);
-    try {
-      await jiraApi("/myself", { domain, email, apiToken }, { method: "GET" });
-      const cfg = { domain, email, apiToken };
-      saveJiraConfig(cfg);
-      onSave(cfg);
-    } catch (e) {
-      setErr(e.message.includes("401") ? "Invalid email or API token." : e.message.includes("Failed to fetch") ? "Could not reach Jira — check your domain and that your browser allows cross-origin requests." : e.message);
-    } finally { setTesting(false); }
+  const doCopy = () => {
+    // Try modern clipboard API first, fall back to execCommand
+    const text = prompt;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => {
+        setCopied(true); setTimeout(() => setCopied(false), 2000);
+      }).catch(() => execCopy(text));
+    } else { execCopy(text); }
+  };
+
+  const execCopy = (text) => {
+    if (taRef.current) {
+      taRef.current.select();
+      try { document.execCommand("copy"); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {}
+    }
   };
 
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300, padding:16 }}>
-      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:28, width:"100%", maxWidth:480 }}>
-        <div style={{ fontWeight:700, fontSize:16, color:C.title, fontFamily:FONT_TITLE, marginBottom:6 }}>Connect Jira</div>
-        <div style={{ fontSize:12, color:C.muted, marginBottom:20 }}>One-time setup — saved to your browser. Generate an API token at <strong>id.atlassian.net → Security → API tokens</strong>.</div>
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300, padding:16 }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, width:"100%", maxWidth:600, maxHeight:"85vh", display:"flex", flexDirection:"column", overflow:"hidden" }}>
 
-        <div style={{ marginBottom:12 }}>
-          <label style={lbl}>Jira Domain</label>
-          <input style={inp} value={domain} onChange={e=>setDomain(e.target.value)} placeholder="yourcompany.atlassian.net" />
-        </div>
-        <div style={{ marginBottom:12 }}>
-          <label style={lbl}>Your Atlassian Email</label>
-          <input style={inp} value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@company.com" />
-        </div>
-        <div style={{ marginBottom:16 }}>
-          <label style={lbl}>API Token</label>
-          <input style={inp} type="password" value={apiToken} onChange={e=>setApiToken(e.target.value)} placeholder="ATATTxxxx…" />
-        </div>
-
-        {err && <div style={{ fontSize:12, color:C.red, marginBottom:12, padding:"8px 12px", background:`color-mix(in srgb, ${C.red} 10%, transparent)`, borderRadius:6 }}>{err}</div>}
-
-        <div style={{ display:"flex", gap:8, justifyContent:"flex-end", borderTop:`1px solid ${C.border}`, paddingTop:16 }}>
-          <button onClick={onClose} style={{ ...ghost, padding:"7px 16px" }}>Cancel</button>
-          <button onClick={test} disabled={!domain||!email||!apiToken||testing}
-            style={{ ...btn("#107ACA"), padding:"7px 20px", opacity:(!domain||!email||!apiToken||testing)?0.5:1 }}>
-            {testing ? "Testing…" : "Save & Connect"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── JiraReviewModal ──────────────────────────────────────────────────────────
-
-function JiraReviewModal({ topic, members, jiraConfig, onClose, onCreated }) {
-  const owner      = members.find(m => m.id === topic.ownerId);
-  const supporter1 = members.find(m => m.id === topic.supporter1Id);
-  const supporter2 = members.find(m => m.id === topic.supporter2Id);
-  const sz         = SIZES[topic.size];
-  const endDate    = topic.startDate ? fmt(addWorkingDays(topic.startDate, sz.days)) : null;
-  const label      = topic.type === "discovery" ? "Discovery" : "Design";
-  const featureTeamId = JIRA_OPTS.featureTeam[topic.team] ?? null;
-
-  const [initiatives, setInitiatives] = useState([]);
-  const [parentId,    setParentId]    = useState("");
-  const [creating,    setCreating]    = useState(false);
-  const [err,         setErr]         = useState(null);
-  const [loadingParents, setLoadingParents] = useState(true);
-
-  useEffect(() => {
-    searchJiraInitiatives(topic.title, jiraConfig).then(list => {
-      setInitiatives(list);
-      if (list.length > 0) setParentId(list[0].id);
-      setLoadingParents(false);
-    });
-  }, []);
-
-  const Field = ({ label: fl, value, dim }) => (
-    <div style={{ display:"flex", gap:0, marginBottom:8, fontSize:13 }}>
-      <span style={{ width:160, flexShrink:0, color:C.muted, fontSize:12 }}>{fl}</span>
-      <span style={{ color: dim ? C.dim : C.text }}>{value || <span style={{color:C.dim}}>—</span>}</span>
-    </div>
-  );
-
-  const create = async () => {
-    setCreating(true); setErr(null);
-    try {
-      // Resolve account IDs
-      const assigneeId     = await lookupJiraAccountId(owner?.name, jiraConfig);
-      const collabIds      = (await Promise.all(
-        [supporter1, supporter2].filter(Boolean).map(s => lookupJiraAccountId(s.name, jiraConfig))
-      )).filter(Boolean);
-
-      const body = {
-        fields: {
-          project:    { id: JIRA_PROJECT_ID },
-          issuetype:  { id: JIRA_EPIC_TYPE },
-          summary:    topic.title,
-          labels:     [label],
-          [JF.domain]:        { id: JIRA_OPTS.domainCareCo },
-          [JF.category]:      { id: JIRA_OPTS.categoryCareCo },
-          [JF.tempoTeam]:     { id: JIRA_OPTS.tempoTeamCareCo },
-        },
-      };
-
-      if (topic.description)  body.fields.description = { type:"doc", version:1, content:[{ type:"paragraph", content:[{ type:"text", text:topic.description }] }] };
-      if (assigneeId)         body.fields.assignee     = { id: assigneeId };
-      if (collabIds.length)   body.fields[JF.collaborators] = collabIds.map(id => ({ id }));
-      if (topic.startDate)    body.fields[JF.startDate]  = topic.startDate;
-      if (endDate)            body.fields.duedate         = endDate;
-      if (featureTeamId)      body.fields[JF.featureTeam] = { id: featureTeamId };
-      if (parentId)           body.fields.parent          = { id: parentId };
-
-      const result = await jiraApi("/issue", jiraConfig, { method:"POST", body: JSON.stringify(body) });
-      const url = `https://${jiraConfig.domain}/browse/${result.key}`;
-      window.open(url, "_blank");
-      onCreated(topic.id, result.key, url);
-    } catch(e) {
-      setErr(e.message);
-    } finally { setCreating(false); }
-  };
-
-  return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300, padding:16 }}>
-      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:24, width:"100%", maxWidth:560, maxHeight:"90vh", overflowY:"auto" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:20 }}>
-          <span style={{ fontSize:18 }}>⚡</span>
-          <div style={{ fontWeight:700, fontSize:16, color:C.title, fontFamily:FONT_TITLE }}>Create Jira Epic</div>
-          <div style={{ marginLeft:"auto", fontSize:11, color:C.dim, background:C.surfaceAlt, padding:"2px 8px", borderRadius:4 }}>PDP · Epic · BACKLOG</div>
+        {/* Header */}
+        <div style={{ padding:"18px 20px 14px", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"flex-start", gap:10 }}>
+          <span style={{ fontSize:20, lineHeight:1 }}>⚡</span>
+          <div style={{ flex:1 }}>
+            <div style={{ fontWeight:700, fontSize:15, color:C.title, fontFamily:FONT_TITLE, marginBottom:3 }}>
+              Create Jira Epic for "{topic.title}"
+            </div>
+            <div style={{ fontSize:13, color:C.muted }}>
+              Topic info copied — paste into Claude to create the Epic in Jira.
+            </div>
+          </div>
+          <button onClick={onClose} style={{ ...ghost, padding:"4px 8px", fontSize:16, lineHeight:1, flexShrink:0, marginTop:-2 }}>✕</button>
         </div>
 
-        <div style={{ ...card, marginBottom:16, padding:"14px 16px" }}>
-          <Field label="Summary"     value={topic.title} />
-          <Field label="Description" value={topic.description} dim={!topic.description} />
-          <Field label="Assignee"    value={owner?.name} />
-          <Field label="Collaborators" value={[supporter1, supporter2].filter(Boolean).map(s=>s.name).join(", ")} dim={!supporter1&&!supporter2} />
-          <Field label="Labels"      value={label} />
-          <Field label="Start date"  value={topic.startDate} />
-          <Field label="Due date"    value={endDate} />
-          <Field label="Feature Team" value={topic.team === "CareCo" ? "— (cross-domain)" : topic.team} dim={topic.team === "CareCo"} />
-          <Field label="Domain"      value="CARE COOPERATION" />
-          <Field label="Category"    value="CARE COOPERATION" />
-          <Field label="Tempo Team"  value="DESIGN - Cooperative Care" />
-        </div>
+        {/* Prompt text */}
+        <textarea
+          ref={taRef}
+          readOnly
+          value={prompt}
+          onClick={e => e.target.select()}
+          style={{
+            flex:1, resize:"none", border:"none", outline:"none",
+            padding:"16px 20px", fontSize:12, lineHeight:1.65,
+            fontFamily:"'Roboto Mono', 'Courier New', monospace",
+            background:C.surfaceAlt, color:C.text, minHeight:260,
+            overflowY:"auto",
+          }}
+        />
 
-        <div style={{ marginBottom:16 }}>
-          <label style={lbl}>Parent Initiative {loadingParents ? "(loading…)" : `(${initiatives.length} found)`}</label>
-          <select style={selInp} value={parentId} onChange={e=>setParentId(e.target.value)} disabled={loadingParents}>
-            <option value="">— No parent —</option>
-            {initiatives.map(i => (
-              <option key={i.id} value={i.id}>{i.key} · {i.fields?.summary}</option>
-            ))}
-          </select>
-          <div style={{ fontSize:11, color:C.dim, marginTop:4 }}>You can change this in Jira after creation.</div>
-        </div>
-
-        {err && <div style={{ fontSize:12, color:C.red, marginBottom:12, padding:"8px 12px", background:`color-mix(in srgb, ${C.red} 10%, transparent)`, borderRadius:6 }}>{err}</div>}
-
-        <div style={{ display:"flex", gap:8, justifyContent:"flex-end", borderTop:`1px solid ${C.border}`, paddingTop:16 }}>
-          <button onClick={onClose} style={{ ...ghost, padding:"7px 16px" }}>Cancel</button>
-          <button onClick={create} disabled={creating}
-            style={{ background:"#107ACA", color:"#fff", border:"none", borderRadius:999, padding:"9px 22px", fontSize:14, fontWeight:700, fontFamily:FONT_TITLE, cursor:creating?"wait":"pointer", opacity:creating?0.6:1, display:"flex", alignItems:"center", gap:6 }}>
-            {creating ? "Creating…" : "⚡ Create Epic in Jira"}
-          </button>
+        {/* Footer */}
+        <div style={{ padding:"12px 20px", borderTop:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
+          <div style={{ fontSize:12, color:C.dim }}>Click the text to select all · works in Claude, Cowork or Claude.ai</div>
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={onClose} style={{ ...ghost, padding:"7px 16px", fontSize:13 }}>Close</button>
+            <button onClick={doCopy} style={{
+              background: copied ? "#00703C" : "#107ACA", color:"#fff", border:"none",
+              borderRadius:999, padding:"8px 20px", fontSize:13, fontWeight:700,
+              fontFamily:FONT_BODY, cursor:"pointer", display:"flex", alignItems:"center", gap:6,
+              transition:"background 0.2s",
+            }}>
+              {copied ? "✓ Copied!" : "Copy prompt"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -753,12 +665,11 @@ function TopicsTab({ topics, members, onAdd, onEdit, onDelete, onJira }) {
                 <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                   <button
                     onClick={() => onJira(t)}
-                    title={t.jiraKey ? `View ${t.jiraKey} in Jira` : "Create Jira Epic"}
+                    title="Copy Claude prompt to create a Jira Epic"
                     style={{ ...ghost, padding: "4px 10px", fontSize: 12, display:"flex", alignItems:"center", gap:4,
-                      color: t.jiraKey ? "#0369A1" : C.muted,
-                      borderColor: t.jiraKey ? "color-mix(in srgb, #0369A1 40%, transparent)" : C.border,
+                      color: C.muted, borderColor: C.border,
                     }}>
-                    {t.jiraKey ? `⚡ ${t.jiraKey}` : "⚡ Jira"}
+                    ⚡ Jira
                   </button>
                   <button onClick={() => onEdit(t)} style={{ ...ghost, padding: "4px 10px" }}>Edit</button>
                   <button
@@ -1534,9 +1445,7 @@ export default function App() {
   const [editId,   setEditId]   = useState(null);
   const [form,     setForm]     = useState(makeEmptyForm);
 
-  const [jiraConfig,     setJiraConfig]     = useState(() => loadJiraConfig());
-  const [showJiraSetup,  setShowJiraSetup]  = useState(false);
-  const [jiraReviewTopic, setJiraReviewTopic] = useState(null);
+  const [jiraPromptModal, setJiraPromptModal] = useState(null); // { topic, prompt }
 
   // Quarter-derived values
   const { year, q }    = quarter;
@@ -1559,10 +1468,15 @@ export default function App() {
 
   const handleShare = useCallback(() => {
     const encoded = btoa(JSON.stringify({ topics, members, vacation }));
-    const url = `${window.location.href.split("#")[0]}#${encoded}`;
+    const base = window.location.href.split("?")[0].split("#")[0];
+    const url = `${base}?data=${encoded}`;
     navigator.clipboard.writeText(url).then(() => {
       setCopied(true); setTimeout(() => setCopied(false), 2500);
-    }).catch(() => { window.location.hash = encoded; });
+    }).catch(() => {
+      // Fallback: update the address bar so the user can copy manually
+      window.history.replaceState(null, "", `?data=${encoded}`);
+      setCopied(true); setTimeout(() => setCopied(false), 2500);
+    });
   }, [topics, members, vacation]);
 
   const openAdd  = () => { setForm(makeEmptyForm()); setEditId(null); setShowForm(true); };
@@ -1583,15 +1497,10 @@ export default function App() {
     setTopics((ts) => ts.map((t) => (t.id === id ? { ...t, startDate: newDate } : t)));
   }, []);
 
-  const handleJiraCreated = useCallback((topicId, jiraKey, jiraUrl) => {
-    setTopics(ts => ts.map(t => t.id === topicId ? { ...t, jiraKey, jiraUrl } : t));
-    setJiraReviewTopic(null);
-  }, []);
-
-  const openJiraCreate = (topic) => {
-    if (!jiraConfig) { setShowJiraSetup(true); }
-    else { setJiraReviewTopic(topic); }
-  };
+  const openJiraPrompt = useCallback((topic) => {
+    const prompt = generateJiraPrompt(topic, members);
+    setJiraPromptModal({ topic, prompt });
+  }, [members]);
 
   // Capacity
   const capacities = useMemo(() => {
@@ -1654,7 +1563,7 @@ export default function App() {
 
       {/* Content */}
       <div style={{ padding: "20px 24px", maxWidth: 1100, margin: "0 auto" }}>
-        {tab === "topics"   && <TopicsTab   topics={topics} members={members} onAdd={openAdd} onEdit={openEdit} onDelete={deleteTopic} onJira={openJiraCreate} />}
+        {tab === "topics"   && <TopicsTab   topics={topics} members={members} onAdd={openAdd} onEdit={openEdit} onDelete={deleteTopic} onJira={openJiraPrompt} />}
         {tab === "team"     && <TeamTab     members={members} setMembers={setMembers} vacation={vacation} setVacation={setVacation} qWorkingDays={qWorkingDays} qLabel={qLabel} qHolidays={qHolidays} />}
         {tab === "capacity" && <CapacityTab capacities={capacities} topics={topics} members={members} onEdit={openEdit} qWorkingDays={qWorkingDays} qLabel={qLabel} />}
         {tab === "timeline" && <TimelineTab timelineTopics={timelineTopics} members={members} onUpdateTopicDate={updateTopicDate} onEdit={openEdit}
@@ -1668,20 +1577,12 @@ export default function App() {
           onSave={saveTopic} onClose={() => setShowForm(false)} isEdit={!!editId} />
       )}
 
-      {showJiraSetup && (
-        <JiraSetupModal
-          onSave={(cfg) => { setJiraConfig(cfg); setShowJiraSetup(false); }}
-          onClose={() => setShowJiraSetup(false)}
-        />
-      )}
-
-      {jiraReviewTopic && (
-        <JiraReviewModal
-          topic={jiraReviewTopic}
-          members={members}
-          jiraConfig={jiraConfig}
-          onClose={() => setJiraReviewTopic(null)}
-          onCreated={handleJiraCreated}
+      {/* Jira prompt modal */}
+      {jiraPromptModal && (
+        <JiraPromptModal
+          topic={jiraPromptModal.topic}
+          prompt={jiraPromptModal.prompt}
+          onClose={() => setJiraPromptModal(null)}
         />
       )}
     </div>
