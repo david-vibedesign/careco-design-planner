@@ -170,11 +170,28 @@ function getHolidaysInQuarter(year, q) {
 
 // ─── Initial state ────────────────────────────────────────────────────────────
 
+const ROLES = [
+  "Content Design",
+  "User Research",
+  "Product Design",
+  "Team Management",
+];
+
+const MEMBER_COLORS = [
+  "#00703C", // Dark green
+  "#4BAE4F", // Green
+  "#F4B942", // Golden yellow
+  "#EF6C3B", // Orange
+  "#C21858", // Crimson
+  "#9C74BB", // Lavender
+  "#7B1FA2", // Purple
+  "#2176D2", // Blue
+  "#162B5C", // Navy
+  "#78909C", // Slate
+];
+
 const INIT_MEMBERS = [
-  { id: "m1", name: "Designer 1",    role: "Senior Product Designer",    color: "#A855F7" },
-  { id: "m2", name: "Designer 2",    role: "Senior Product Designer",    color: "#3B82F6" },
-  { id: "m3", name: "Researcher",    role: "User Researcher",            color: "#10B981" },
-  { id: "m4", name: "David Brandau", role: "Senior Design Team Manager", color: "#F97316" },
+  { id: "m1", name: "", role: "Product Design", color: "#2176D2" },
 ];
 
 // EMPTY_FORM is a function so startDate is always today
@@ -198,9 +215,15 @@ const C = {
   dim:        "var(--c-dim)",
   green:      "var(--c-green)",
   red:        "var(--c-red)",
+  title:      "var(--c-title)",
 };
 
+// Font stacks
+const FONT_TITLE = "'Montserrat', -apple-system, sans-serif";
+const FONT_BODY  = "'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+
 const THEME_CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Roboto:wght@400;500;700&display=swap');
   :root, [data-theme="dark"] {
     --c-bg:          #0D1117;
     --c-surface:     #161B22;
@@ -208,9 +231,10 @@ const THEME_CSS = `
     --c-border:      #30363D;
     --c-text:        #E6EDF3;
     --c-muted:       #8B949E;
-    --c-dim:         #484F58;
+    --c-dim:         #768390;
     --c-green:       #238636;
     --c-red:         #F85149;
+    --c-title:       #E6EDF3;
     color-scheme: dark;
   }
   [data-theme="light"] {
@@ -223,6 +247,7 @@ const THEME_CSS = `
     --c-dim:         #9198A1;
     --c-green:       #1A7F37;
     --c-red:         #CF222E;
+    --c-title:       #00264C;
     color-scheme: light;
   }
   *, *::before, *::after {
@@ -268,6 +293,9 @@ const inp = {
   borderRadius: 6, color: C.text, padding: "6px 10px",
   fontSize: 13, width: "100%", boxSizing: "border-box", outline: "none",
 };
+
+// Select gets extra right padding so the native chevron doesn't crowd the text
+const selInp = { ...inp, paddingRight: 28 };
 
 const btn = (bg = C.green, color = "#fff") => ({
   background: bg, color, border: "none", borderRadius: 6,
@@ -351,10 +379,13 @@ function DeleteConfirm({ title, onConfirm, onCancel }) {
 
 function TopicsTab({ topics, members, onAdd, onEdit, onDelete }) {
   const [filter, setFilter]               = useState("all");
+  const [sizeFilter, setSizeFilter]       = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
   const filters  = ["all", "⭐ priority", ...TEAMS];
   const filtered = topics.filter((t) => {
+    const passesSize = !sizeFilter || t.size === sizeFilter;
+    if (!passesSize) return false;
     if (filter === "all") return true;
     if (filter === "⭐ priority") return t.priority;
     return t.team === filter;
@@ -375,22 +406,45 @@ function TopicsTab({ topics, members, onAdd, onEdit, onDelete }) {
             }}>{f}</button>
           ))}
         </div>
-        <button onClick={onAdd} style={btn()}>+ Add Topic</button>
+        <button onClick={onAdd} style={{
+          background: "#107ACA", color: "#fff", border: "none",
+          borderRadius: 999, padding: "9px 22px",
+          fontSize: 14, fontWeight: 700, fontFamily: "'Roboto', sans-serif",
+          cursor: "pointer", whiteSpace: "nowrap", letterSpacing: "0.01em",
+          display: "flex", alignItems: "center", gap: 6,
+        }}>+ Add Topic</button>
       </div>
 
-      {/* Summary */}
+      {/* Summary / size filter */}
       {topics.length > 0 && (
-        <div style={{ ...card, display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 14, padding: "10px 16px" }}>
+        <div style={{ ...card, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 14, padding: "10px 16px" }}>
           {Object.keys(SIZES).map((sz) => {
             const count = topics.filter((t) => t.size === sz).length;
             if (!count) return null;
+            const active = sizeFilter === sz;
             return (
-              <div key={sz} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <button
+                key={sz}
+                onClick={() => setSizeFilter(active ? null : sz)}
+                title={active ? `Remove ${sz} filter` : `Filter by ${sz}`}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  background: active ? `color-mix(in srgb, ${SIZES[sz].color} 18%, transparent)` : "transparent",
+                  border: active ? `1px solid color-mix(in srgb, ${SIZES[sz].color} 50%, transparent)` : `1px solid transparent`,
+                  borderRadius: 6, padding: "3px 8px 3px 3px", cursor: "pointer",
+                  transition: "background 0.15s, border-color 0.15s",
+                }}
+              >
                 <Badge label={sz} color={SIZES[sz].color} />
-                <span style={{ fontSize: 12, color: C.muted }}>×{count}</span>
-              </div>
+                <span style={{ fontSize: 12, color: active ? C.text : C.muted }}>×{count}</span>
+              </button>
             );
           })}
+          {sizeFilter && (
+            <button onClick={() => setSizeFilter(null)} style={{ ...ghost, padding: "3px 8px", fontSize: 11 }}>
+              ✕ clear size filter
+            </button>
+          )}
           <div style={{ marginLeft: "auto", fontSize: 12, color: C.muted }}>
             {filtered.length} topic{filtered.length !== 1 ? "s" : ""}
           </div>
@@ -423,9 +477,9 @@ function TopicsTab({ topics, members, onAdd, onEdit, onDelete }) {
                   <span
                     onClick={() => onEdit(t)}
                     title="Click to edit"
-                    style={{ ...clickableTitle, fontWeight: 600, fontSize: 14, color: C.text }}
+                    style={{ ...clickableTitle, fontWeight: 600, fontSize: 14, color: C.title, fontFamily: FONT_TITLE }}
                     onMouseEnter={e => { e.currentTarget.style.borderBottomColor = C.muted; e.currentTarget.style.color = C.muted; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderBottomColor = "transparent"; e.currentTarget.style.color = C.text; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderBottomColor = "transparent"; e.currentTarget.style.color = C.title; }}
                   >{t.title}</span>
                   <Badge label={t.team} color={TEAM_COLORS[t.team]} />
                   <Badge label={t.type} color={C.dim} />
@@ -478,34 +532,143 @@ function TopicsTab({ topics, members, onAdd, onEdit, onDelete }) {
 // ─── TeamTab ──────────────────────────────────────────────────────────────────
 
 function TeamTab({ members, setMembers, vacation, setVacation, qWorkingDays, qLabel, qHolidays }) {
-  const updateName = (id, name) =>
-    setMembers((ms) => ms.map((m) => (m.id === id ? { ...m, name } : m)));
-  const updateVac = (id, val) =>
-    setVacation((v) => ({ ...v, [id]: Math.max(0, Math.min(qWorkingDays, parseInt(val) || 0)) }));
+  const [dragId,  setDragId]  = useState(null);
+  const [dropId,  setDropId]  = useState(null);
+  const [colorPickerOpenId, setColorPickerOpenId] = useState(null);
+
+  const updateName  = (id, name)  => setMembers((ms) => ms.map((m) => (m.id === id ? { ...m, name }  : m)));
+  const updateRole  = (id, role)  => setMembers((ms) => ms.map((m) => (m.id === id ? { ...m, role }  : m)));
+  const updateColor = (id, color) => { setMembers((ms) => ms.map((m) => (m.id === id ? { ...m, color } : m))); setColorPickerOpenId(null); };
+  const updateVac   = (id, val)   => setVacation((v) => ({ ...v, [id]: Math.max(0, Math.min(qWorkingDays, parseInt(val) || 0)) }));
+
+  const addMember = () => {
+    const id    = `m${Date.now()}`;
+    const color = MEMBER_COLORS[members.length % MEMBER_COLORS.length];
+    setMembers((ms) => [{ id, name: "", role: "Product Design", color }, ...ms]);
+    setVacation((v) => ({ ...v, [id]: 0 }));
+  };
+
+  const removeMember = (id) => {
+    setMembers((ms) => ms.filter((m) => m.id !== id));
+    setVacation((v) => { const n = { ...v }; delete n[id]; return n; });
+  };
+
+  const handleDragStart = (e, id) => {
+    setDragId(id);
+    e.dataTransfer.effectAllowed = "move";
+  };
+  const handleDragOver = (e, id) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (id !== dragId) setDropId(id);
+  };
+  const handleDrop = (e, id) => {
+    e.preventDefault();
+    if (dragId && id !== dragId) {
+      setMembers((ms) => {
+        const arr = [...ms];
+        const from = arr.findIndex((m) => m.id === dragId);
+        const to   = arr.findIndex((m) => m.id === id);
+        arr.splice(to, 0, arr.splice(from, 1)[0]);
+        return arr;
+      });
+    }
+    setDragId(null); setDropId(null);
+  };
+  const handleDragEnd = () => { setDragId(null); setDropId(null); };
 
   return (
     <div>
-      <div style={{ ...card, background: C.bg, marginBottom: 16 }}>
+      {/* Header row */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
         <div style={{ fontSize: 13, color: C.muted }}>
-          {qLabel} total working days (NL 🇳🇱):{" "}
-          <strong style={{ color: C.text }}>{qWorkingDays} days</strong>
-          <span style={{ marginLeft: 12, color: C.dim }}>excluding {qHolidays.length} public holiday{qHolidays.length !== 1 ? "s" : ""}</span>
+          {qLabel}: <strong style={{ color: C.text }}>{qWorkingDays} working days</strong>
+          <span style={{ marginLeft: 10, color: C.dim }}>· {qHolidays.length} NL holiday{qHolidays.length !== 1 ? "s" : ""}</span>
         </div>
+        <button onClick={addMember} style={{
+          background: "#107ACA", color: "#fff", border: "none",
+          borderRadius: 999, padding: "9px 22px",
+          fontSize: 14, fontWeight: 700, fontFamily: "'Roboto', sans-serif",
+          cursor: "pointer", whiteSpace: "nowrap", letterSpacing: "0.01em",
+          display: "flex", alignItems: "center", gap: 6,
+        }}>+ Add Designer</button>
       </div>
 
       {members.map((m) => {
-        const avail = qWorkingDays - (vacation[m.id] || 0);
+        const avail     = qWorkingDays - (vacation[m.id] || 0);
+        const isDragging = dragId === m.id;
+        const isDropTarget = dropId === m.id && dragId !== m.id;
         return (
-          <div key={m.id} style={{ ...card }}>
-            <div style={{ display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2, width: "100%" }}>
-                <div style={{ width: 10, height: 10, borderRadius: "50%", background: m.color, flexShrink: 0 }} />
-                <span style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{m.name}</span>
+          <div key={m.id}
+            draggable
+            onDragStart={(e) => handleDragStart(e, m.id)}
+            onDragOver={(e) => handleDragOver(e, m.id)}
+            onDrop={(e) => handleDrop(e, m.id)}
+            onDragEnd={handleDragEnd}
+            style={{
+              ...card,
+              opacity: isDragging ? 0.35 : 1,
+              borderColor: isDropTarget ? C.muted : C.border,
+              boxShadow: isDropTarget ? `0 0 0 2px ${C.dim}` : "none",
+              cursor: "grab",
+              transition: "opacity 0.15s, border-color 0.15s, box-shadow 0.15s",
+            }}
+          >
+            <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", marginBottom: 4, position: "relative" }}>
+                {/* Drag handle */}
+                <span style={{ fontSize: 14, color: C.dim, cursor: "grab", userSelect: "none", flexShrink: 0 }} title="Drag to reorder">⠿</span>
+                {/* Color swatch button */}
+                <button
+                  onClick={() => setColorPickerOpenId(colorPickerOpenId === m.id ? null : m.id)}
+                  title="Pick colour"
+                  style={{ width: 18, height: 18, borderRadius: "50%", background: m.color, border: "2px solid transparent", outline: colorPickerOpenId === m.id ? `2px solid ${m.color}` : "none", outlineOffset: 2, cursor: "pointer", flexShrink: 0, padding: 0 }}
+                />
+                {/* Inline colour picker */}
+                {colorPickerOpenId === m.id && (
+                  <div style={{
+                    position: "absolute", top: "calc(100% + 6px)", left: 28, zIndex: 50,
+                    background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8,
+                    padding: 10, display: "flex", flexWrap: "wrap", gap: 7, width: 194,
+                    boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+                  }}>
+                    {MEMBER_COLORS.map((hex) => (
+                      <button
+                        key={hex}
+                        onClick={() => updateColor(m.id, hex)}
+                        title={hex}
+                        style={{
+                          width: 26, height: 26, borderRadius: "50%", background: hex,
+                          border: m.color === hex ? "3px solid #fff" : "2px solid transparent",
+                          outline: m.color === hex ? `2px solid ${hex}` : "none",
+                          outlineOffset: 1,
+                          cursor: "pointer", padding: 0, flexShrink: 0,
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+                <span style={{ fontWeight: 600, fontSize: 14, color: m.name ? C.title : C.dim, fontFamily: FONT_TITLE }}>
+                  {m.name || "Unnamed designer"}
+                </span>
                 <span style={{ fontSize: 12, color: C.muted }}>{m.role}</span>
+                <button
+                  onClick={() => removeMember(m.id)}
+                  title="Remove designer"
+                  style={{ ...ghost, marginLeft: "auto", padding: "2px 8px", fontSize: 12, color: C.dim, borderColor: "transparent" }}
+                >✕</button>
               </div>
               <div style={{ flex: 2, minWidth: 160 }}>
-                <label style={lbl}>Display Name</label>
-                <input style={inp} value={m.name} onChange={(e) => updateName(m.id, e.target.value)} />
+                <label style={lbl}>Name</label>
+                <input style={inp} value={m.name}
+                  placeholder="Full name"
+                  onChange={(e) => updateName(m.id, e.target.value)} />
+              </div>
+              <div style={{ flex: 2, minWidth: 160 }}>
+                <label style={lbl}>Role</label>
+                <select style={selInp} value={m.role} onChange={(e) => updateRole(m.id, e.target.value)}>
+                  {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
               </div>
               <div style={{ width: 120 }}>
                 <label style={lbl}>Vacation Days ({qLabel})</label>
@@ -521,6 +684,12 @@ function TeamTab({ members, setMembers, vacation, setVacation, qWorkingDays, qLa
           </div>
         );
       })}
+
+      {members.length === 0 && (
+        <div style={{ textAlign: "center", color: C.dim, padding: "48px 0", fontSize: 13 }}>
+          No team members yet — add a designer to get started.
+        </div>
+      )}
 
       <div style={{ ...card, background: C.bg, marginTop: 6 }}>
         <div style={{ fontSize: 12, color: C.dim, fontWeight: 600, marginBottom: 10 }}>
@@ -557,7 +726,7 @@ function CapacityTab({ capacities, topics, members, onEdit, qWorkingDays, qLabel
             <div key={c.id} style={{ ...card }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                 <div style={{ width: 10, height: 10, borderRadius: "50%", background: c.color }} />
-                <span style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{c.name}</span>
+                <span style={{ fontWeight: 600, fontSize: 14, color: C.title, fontFamily: FONT_TITLE }}>{c.name}</span>
               </div>
               <div style={{ fontSize: 12, color: C.muted, marginBottom: 14 }}>{c.role}</div>
               <div style={{ marginBottom: 10 }}>
@@ -587,7 +756,7 @@ function CapacityTab({ capacities, topics, members, onEdit, qWorkingDays, qLabel
         if (!myTopics.length) return null;
         return (
           <div key={c.id} style={{ ...card, marginBottom: 12 }}>
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, display: "flex", alignItems: "center", gap: 8, color: C.text }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, display: "flex", alignItems: "center", gap: 8, color: C.title, fontFamily: FONT_TITLE }}>
               <div style={{ width: 8, height: 8, borderRadius: "50%", background: c.color }} />
               {c.name}'s Topics
             </div>
@@ -607,9 +776,9 @@ function CapacityTab({ capacities, topics, members, onEdit, qWorkingDays, qLabel
                     <span
                       onClick={() => onEdit(t)}
                       title="Click to edit"
-                      style={{ ...clickableTitle, color: C.text }}
+                      style={{ ...clickableTitle, color: C.title, fontFamily: FONT_TITLE, fontWeight: 600 }}
                       onMouseEnter={e => { e.currentTarget.style.borderBottomColor = C.muted; e.currentTarget.style.color = C.muted; }}
-                      onMouseLeave={e => { e.currentTarget.style.borderBottomColor = "transparent"; e.currentTarget.style.color = C.text; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderBottomColor = "transparent"; e.currentTarget.style.color = C.title; }}
                     >{t.title}</span>
                     <Badge label={t.team} color={TEAM_COLORS[t.team]} small />
                     <Badge label={t.size} color={SIZES[t.size].color} small />
@@ -632,6 +801,7 @@ function CapacityTab({ capacities, topics, members, onEdit, qWorkingDays, qLabel
 // ─── TimelineTab ──────────────────────────────────────────────────────────────
 
 function TimelineTab({ timelineTopics, members, onUpdateTopicDate, onEdit, quarter, onPrevQuarter, onNextQuarter }) {
+  const [sortBy, setSortBy] = useState("date"); // "date" | "owner" | "team"
   const { year, q } = quarter;
   const { start: Q_START, end: Q_END } = getQuarterBounds(year, q);
   const Q_CAL_DAYS = getQuarterCalDays(year, q);
@@ -702,23 +872,38 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate, onEdit, quart
     document.body.style.cursor = "grabbing";
   };
 
-  // Filter to topics that overlap with this quarter
-  const visibleTopics = timelineTopics.filter((t) => {
-    if (!t.startDate) return false;
-    const startOff = dayOffset(t.startDate);
-    const endOff   = startOff + (SIZES[t.size]?.days || 5) + 7; // generous buffer
-    return endOff >= 0 && startOff <= Q_CAL_DAYS;
-  });
+  // Filter to topics that overlap with this quarter, then sort
+  const visibleTopics = useMemo(() => {
+    const filtered = timelineTopics.filter((t) => {
+      if (!t.startDate) return false;
+      const startOff = dayOffset(t.startDate);
+      const endOff   = startOff + (SIZES[t.size]?.days || 5) + 7;
+      return endOff >= 0 && startOff <= Q_CAL_DAYS;
+    });
+    if (sortBy === "owner") {
+      return [...filtered].sort((a, b) => {
+        const nameA = members.find((m) => m.id === a.ownerId)?.name ?? "zzz";
+        const nameB = members.find((m) => m.id === b.ownerId)?.name ?? "zzz";
+        return nameA.localeCompare(nameB) || a.startDate.localeCompare(b.startDate);
+      });
+    }
+    if (sortBy === "team") {
+      return [...filtered].sort((a, b) =>
+        a.team.localeCompare(b.team) || a.startDate.localeCompare(b.startDate)
+      );
+    }
+    return filtered; // default: already sorted by startDate from parent
+  }, [timelineTopics, sortBy, members, dayOffset, Q_CAL_DAYS]);
 
   return (
     <div>
       {/* Quarter navigation */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8 }}>
         <button onClick={onPrevQuarter} style={{ ...ghost, display: "flex", alignItems: "center", gap: 5, padding: "5px 12px" }}>
           ← {quarterLabel(prev.year, prev.q)}
         </button>
         <div style={{ textAlign: "center" }}>
-          <span style={{ fontWeight: 700, fontSize: 15, color: C.text }}>{qLabel}</span>
+          <span style={{ fontWeight: 700, fontSize: 15, color: C.title, fontFamily: FONT_TITLE }}>{qLabel}</span>
           {showToday && (
             <span style={{ marginLeft: 10, fontSize: 12, color: "#D29922", fontWeight: 600 }}>
               📍 Today: {todayDateStr}
@@ -728,6 +913,19 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate, onEdit, quart
         <button onClick={onNextQuarter} style={{ ...ghost, display: "flex", alignItems: "center", gap: 5, padding: "5px 12px" }}>
           {quarterLabel(next.year, next.q)} →
         </button>
+      </div>
+
+      {/* Sort controls */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 14 }}>
+        <span style={{ fontSize: 12, color: C.muted, marginRight: 2 }}>Sort:</span>
+        {[["date", "Date"], ["owner", "Owner"], ["team", "Team"]].map(([val, label]) => (
+          <button key={val} onClick={() => setSortBy(val)} style={{
+            ...ghost, padding: "3px 10px", fontSize: 12,
+            background:  sortBy === val ? C.surfaceAlt : "transparent",
+            color:       sortBy === val ? C.text       : C.muted,
+            borderColor: sortBy === val ? C.dim        : C.border,
+          }}>{label}</button>
+        ))}
       </div>
 
       {visibleTopics.length === 0 && (
@@ -742,7 +940,7 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate, onEdit, quart
             {/* Month header */}
             <div style={{ display: "flex" }}>
               <div style={{ width: 200, flexShrink: 0 }} />
-              <div ref={trackAreaRef} style={{ flex: 1, display: "flex" }}>
+              <div ref={trackAreaRef} style={{ flex: 1, display: "flex", position: "relative" }}>
                 {months.map((m, i) => (
                   <div key={i} style={{
                     width: `${(m.days / Q_CAL_DAYS) * 100}%`,
@@ -750,6 +948,15 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate, onEdit, quart
                     borderLeft: `1px solid ${C.border}`, background: C.bg, boxSizing: "border-box",
                   }}>{m.label}</div>
                 ))}
+                {showToday && (
+                  <div style={{ position: "absolute", left: `${todayOffset / Q_CAL_DAYS * 100}%`, top: 0, bottom: -4, width: 2, background: "#D29922", zIndex: 5, pointerEvents: "none" }}>
+                    <div style={{
+                      position: "absolute", top: 2, left: "50%", transform: "translateX(-50%)",
+                      background: "#D29922", color: "#000", fontSize: 9, fontWeight: 700,
+                      padding: "1px 5px", borderRadius: 3, whiteSpace: "nowrap",
+                    }}>TODAY</div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -776,14 +983,14 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate, onEdit, quart
               return (
                 <div key={t.id} style={{ display: "flex", alignItems: "center", marginBottom: 5, minHeight: 38 }}>
                   <div style={{ width: 200, flexShrink: 0, paddingRight: 10 }}>
-                    <div style={{ fontSize: 12, fontWeight: 500, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: C.title, fontFamily: FONT_TITLE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {t.priority ? "⭐ " : ""}
                       <span
                         onClick={() => onEdit(t)}
                         title="Click to edit"
-                        style={{ ...clickableTitle, fontWeight: 500, fontSize: 12 }}
+                        style={{ ...clickableTitle, fontWeight: 600, fontSize: 12 }}
                         onMouseEnter={e => { e.currentTarget.style.borderBottomColor = C.muted; e.currentTarget.style.color = C.muted; }}
-                        onMouseLeave={e => { e.currentTarget.style.borderBottomColor = "transparent"; e.currentTarget.style.color = ""; }}
+                        onMouseLeave={e => { e.currentTarget.style.borderBottomColor = "transparent"; e.currentTarget.style.color = C.title; }}
                       >{t.title}</span>
                     </div>
                     <div style={{ fontSize: 10, color: C.dim, display: "flex", gap: 5, alignItems: "center", marginTop: 1, flexWrap: "wrap" }}>
@@ -804,14 +1011,7 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate, onEdit, quart
 
                     {/* Today line */}
                     {showToday && (
-                      <div style={{ position: "absolute", left: `${todayOffset / Q_CAL_DAYS * 100}%`, top: -4, bottom: -4, width: 2, background: "#D29922", borderRadius: 1, zIndex: 3, pointerEvents: "none" }}>
-                        <div style={{
-                          position: "absolute", bottom: "calc(100% + 2px)", left: "50%",
-                          transform: "translateX(-50%)",
-                          background: "#D29922", color: "#000", fontSize: 9, fontWeight: 700,
-                          padding: "1px 4px", borderRadius: 3, whiteSpace: "nowrap", pointerEvents: "none",
-                        }}>TODAY</div>
-                      </div>
+                      <div style={{ position: "absolute", left: `${todayOffset / Q_CAL_DAYS * 100}%`, top: -4, bottom: -4, width: 2, background: "#D29922", borderRadius: 1, zIndex: 3, pointerEvents: "none" }} />
                     )}
 
                     {/* Bar */}
@@ -900,7 +1100,7 @@ function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
         borderRadius: 12, padding: 24,
         width: "100%", maxWidth: 520, maxHeight: "90vh", overflowY: "auto",
       }}>
-        <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 20, color: C.text }}>
+        <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 20, color: C.title, fontFamily: FONT_TITLE }}>
           {isEdit ? "Edit Topic" : "New Topic"}
         </div>
 
@@ -925,13 +1125,13 @@ function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
         <div style={{ display: "flex", gap: 12, marginBottom: 14 }}>
           <div style={{ flex: 1 }}>
             <label style={lbl}>Team</label>
-            <select style={inp} value={form.team} onChange={(e) => set("team", e.target.value)}>
+            <select style={selInp} value={form.team} onChange={(e) => set("team", e.target.value)}>
               {TEAMS.map((t) => <option key={t}>{t}</option>)}
             </select>
           </div>
           <div style={{ flex: 1 }}>
             <label style={lbl}>Type</label>
-            <select style={inp} value={form.type} onChange={(e) => set("type", e.target.value)}>
+            <select style={selInp} value={form.type} onChange={(e) => set("type", e.target.value)}>
               <option value="discovery">Discovery</option>
               <option value="delivery">Delivery</option>
             </select>
@@ -942,7 +1142,7 @@ function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
         <div style={{ display: "flex", gap: 12, marginBottom: 8 }}>
           <div style={{ flex: 1 }}>
             <label style={lbl}>T-shirt Size</label>
-            <select style={inp} value={form.size} onChange={(e) => set("size", e.target.value)}>
+            <select style={selInp} value={form.size} onChange={(e) => set("size", e.target.value)}>
               {Object.entries(SIZES).map(([k, v]) => (
                 <option key={k} value={k}>{k} – {v.hours} · ~{v.days}d · {v.weeks}wk</option>
               ))}
@@ -980,7 +1180,7 @@ function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
         <div style={{ display: "flex", gap: 12, marginBottom: 14, alignItems: "flex-end" }}>
           <div style={{ flex: 2 }}>
             <label style={lbl}>Owner</label>
-            <select style={inp} value={form.ownerId} onChange={(e) => set("ownerId", e.target.value)}>
+            <select style={selInp} value={form.ownerId} onChange={(e) => set("ownerId", e.target.value)}>
               <option value="">— Unassigned —</option>
               {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             </select>
@@ -999,7 +1199,7 @@ function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
         <div style={{ display: "flex", gap: 12, marginBottom: 8, alignItems: "flex-end" }}>
           <div style={{ flex: 2 }}>
             <label style={lbl}>Supporter 1 (optional)</label>
-            <select style={inp} value={form.supporter1Id}
+            <select style={selInp} value={form.supporter1Id}
               onChange={(e) => {
                 const val = e.target.value;
                 set("supporter1Id", val);
@@ -1026,7 +1226,7 @@ function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
         <div style={{ display: "flex", gap: 12, marginBottom: 14, alignItems: "flex-end" }}>
           <div style={{ flex: 2 }}>
             <label style={lbl}>Supporter 2 (optional)</label>
-            <select style={inp} value={form.supporter2Id}
+            <select style={selInp} value={form.supporter2Id}
               onChange={(e) => {
                 const val = e.target.value;
                 set("supporter2Id", val);
@@ -1161,7 +1361,7 @@ export default function App() {
 
   return (
     <div data-theme={isDark ? "dark" : "light"} style={{
-      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+      fontFamily: FONT_BODY,
       background: C.bg, minHeight: "100vh", color: C.text,
     }}>
       <style>{THEME_CSS}</style>
@@ -1169,11 +1369,9 @@ export default function App() {
       {/* Header */}
       <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "14px 24px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#F59E0B" }} />
-          <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: "-0.3px", color: C.text }}>CareCo Design Planner</span>
+          <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: "-0.3px", color: C.title, fontFamily: FONT_TITLE }}>CareCo Design Planner</span>
           <span style={{ fontSize: 12, color: C.dim, marginLeft: 2 }}>{qLabel}</span>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-            {["PHNX", "NEMO", "KITN"].map((t) => <Badge key={t} label={t} color={TEAM_COLORS[t]} small />)}
             <ThemeToggle isDark={isDark} onToggle={() => setIsDark((d) => !d)} />
             <button onClick={handleShare}
               style={{ ...btn(copied ? C.green : C.surfaceAlt, copied ? "#fff" : C.muted), border: `1px solid ${copied ? C.green : C.border}`, padding: "5px 12px", fontSize: 12, display: "flex", alignItems: "center", gap: 5 }}>
