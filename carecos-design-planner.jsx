@@ -232,6 +232,64 @@ const JIRA_OPTS = {
 
 const SIZE_POINTS = { XS: 1, S: 3, M: 5, L: 8, XL: 13, XXL: 21 };
 
+// ─── GitHub Gist sync ────────────────────────────────────────────────────────
+// Data is stored in a private GitHub Gist as two files:
+//   careco-planner-latest.json   — always the most recent save
+//   careco-planner-previous.json — always the second-to-last save
+
+const GIST_CONFIG_KEY  = "careco-gist-config";  // { token, gistId }
+const GIST_DEBOUNCE    = 4000;
+const GIST_FILE_LATEST = "careco-planner-latest.json";
+const GIST_FILE_PREV   = "careco-planner-previous.json";
+const GH_API           = "https://api.github.com";
+
+function loadGistConfig() {
+  try { return JSON.parse(localStorage.getItem(GIST_CONFIG_KEY)) || null; } catch { return null; }
+}
+function saveGistConfig(cfg) {
+  try { localStorage.setItem(GIST_CONFIG_KEY, JSON.stringify(cfg)); } catch {}
+}
+
+function ghHeaders(token) {
+  return { Authorization: `token ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" };
+}
+
+async function gistFetch(token, gistId) {
+  const res = await fetch(`${GH_API}/gists/${gistId}`, { headers: ghHeaders(token) });
+  if (!res.ok) throw new Error(`GitHub ${res.status}`);
+  const json = await res.json();
+  const file = json.files?.[GIST_FILE_LATEST];
+  if (!file) return null;
+  // For large files GitHub gives a raw_url instead of inline content
+  const content = file.truncated ? await (await fetch(file.raw_url)).text() : file.content;
+  return JSON.parse(content);
+}
+
+async function gistSave(token, gistId, newData, prevData) {
+  const files = { [GIST_FILE_LATEST]: { content: JSON.stringify(newData) } };
+  if (prevData) files[GIST_FILE_PREV] = { content: JSON.stringify(prevData) };
+  const res = await fetch(`${GH_API}/gists/${gistId}`, {
+    method: "PATCH", headers: ghHeaders(token), body: JSON.stringify({ files }),
+  });
+  if (!res.ok) throw new Error(`GitHub ${res.status}`);
+}
+
+async function gistCreate(token) {
+  const empty = JSON.stringify({ topics: [], members: [], vacation: {}, savedAt: 0 });
+  const res = await fetch(`${GH_API}/gists`, {
+    method: "POST",
+    headers: ghHeaders(token),
+    body: JSON.stringify({
+      description: "CareCo Design Planner — auto backup",
+      public: false,
+      files: { [GIST_FILE_LATEST]: { content: empty }, [GIST_FILE_PREV]: { content: empty } },
+    }),
+  });
+  if (!res.ok) throw new Error(`GitHub ${res.status}`);
+  const json = await res.json();
+  return json.id;
+}
+
 function generateJiraPrompt(topic, members) {
   const owner      = members.find(m => m.id === topic.ownerId);
   const supporter1 = members.find(m => m.id === topic.supporter1Id);
@@ -445,6 +503,103 @@ function DeleteConfirm({ title, onConfirm, onCancel }) {
         style={{ ...ghost, padding: "4px 10px", fontSize: 12, color: C.red, borderColor: `color-mix(in srgb, ${C.red} 40%, transparent)` }}>
         Yes, delete
       </button>
+    </div>
+  );
+}
+
+// ─── GistSetupModal ──────────────────────────────────────────────────────────
+
+function GistSetupModal({ existing, onSave, onDisconnect, onClose }) {
+  const [token,    setToken]    = useState(existing?.token    || "");
+  const [gistId,   setGistId]   = useState(existing?.gistId   || "");
+  const [status,   setStatus]   = useState("idle"); // idle | testing | creating | ok | error
+  const [err,      setErr]      = useState(null);
+
+  const testConnection = async () => {
+    setStatus("testing"); setErr(null);
+    try {
+      await gistFetch(token.trim(), gistId.trim());
+      setStatus("ok");
+    } catch (e) {
+      setErr(e.message.includes("401") ? "Invalid token — check it has the 'gist' scope." : e.message.includes("404") ? "Gist not found — check the Gist ID." : e.message);
+      setStatus("error");
+    }
+  };
+
+  const createGist = async () => {
+    setStatus("creating"); setErr(null);
+    try {
+      const id = await gistCreate(token.trim());
+      setGistId(id);
+      setStatus("ok");
+    } catch (e) {
+      setErr(e.message.includes("401") ? "Invalid token — check it has the 'gist' scope." : e.message);
+      setStatus("error");
+    }
+  };
+
+  const canProceed = token.trim().length > 0;
+  const isOk = status === "ok";
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300, padding:16 }}>
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:28, width:"100%", maxWidth:520 }}>
+        <div style={{ fontWeight:700, fontSize:16, color:C.title, fontFamily:FONT_TITLE, marginBottom:6 }}>☁ Connect GitHub Gist backup</div>
+        <div style={{ fontSize:13, color:C.muted, marginBottom:20, lineHeight:1.6 }}>
+          Your plan auto-saves to a private GitHub Gist every few seconds and loads automatically on any device. No server needed.
+        </div>
+
+        <div style={{ marginBottom:12 }}>
+          <label style={lbl}>GitHub Personal Access Token</label>
+          <input style={{ ...inp, fontFamily:"monospace", fontSize:12 }}
+            type="password" value={token} placeholder="github_pat_… or ghp_…"
+            onChange={e => { setToken(e.target.value); setStatus("idle"); setErr(null); }} />
+          <div style={{ fontSize:11, color:C.dim, marginTop:4 }}>
+            Create at <strong>github.com → Settings → Developer settings → Personal access tokens</strong>. Only the <code>gist</code> scope is needed.
+          </div>
+        </div>
+
+        <div style={{ marginBottom:16 }}>
+          <label style={lbl}>Gist ID</label>
+          <div style={{ display:"flex", gap:8 }}>
+            <input style={{ ...inp, fontFamily:"monospace", fontSize:12, flex:1 }}
+              value={gistId} placeholder="e.g. a1b2c3d4e5f6…"
+              onChange={e => { setGistId(e.target.value); setStatus("idle"); setErr(null); }} />
+            <button onClick={createGist} disabled={!canProceed || status === "creating"}
+              style={{ ...ghost, padding:"7px 14px", fontSize:12, whiteSpace:"nowrap", opacity: canProceed ? 1 : 0.5 }}>
+              {status === "creating" ? "Creating…" : "Create new"}
+            </button>
+          </div>
+          <div style={{ fontSize:11, color:C.dim, marginTop:4 }}>Paste an existing Gist ID, or click <strong>Create new</strong> to make one automatically.</div>
+        </div>
+
+        {err && <div style={{ fontSize:12, color:C.red, marginBottom:12, padding:"8px 12px", background:`color-mix(in srgb, ${C.red} 10%, transparent)`, borderRadius:6 }}>{err}</div>}
+        {isOk && <div style={{ fontSize:12, color:"#00703C", marginBottom:12, padding:"8px 12px", background:"color-mix(in srgb, #00703C 10%, transparent)", borderRadius:6 }}>✓ Connected successfully!</div>}
+
+        <div style={{ display:"flex", gap:8, justifyContent:"space-between", borderTop:`1px solid ${C.border}`, paddingTop:16 }}>
+          <div>
+            {existing && (
+              <button onClick={onDisconnect} style={{ ...ghost, padding:"7px 14px", fontSize:13, color:C.red, borderColor:`color-mix(in srgb, ${C.red} 30%, transparent)` }}>
+                Disconnect
+              </button>
+            )}
+          </div>
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={onClose} style={{ ...ghost, padding:"7px 16px", fontSize:13 }}>Cancel</button>
+            <button onClick={testConnection} disabled={!canProceed || !gistId.trim() || status === "testing"}
+              style={{ ...ghost, padding:"7px 16px", fontSize:13, opacity: canProceed && gistId.trim() ? 1 : 0.5 }}>
+              {status === "testing" ? "Testing…" : "Test connection"}
+            </button>
+            <button onClick={() => { const cfg = { token: token.trim(), gistId: gistId.trim() }; saveGistConfig(cfg); onSave(cfg); }}
+              disabled={!isOk}
+              style={{ background: isOk ? "#107ACA" : C.surfaceAlt, color: isOk ? "#fff" : C.dim, border:"none",
+                borderRadius:999, padding:"8px 20px", fontSize:13, fontWeight:700, fontFamily:FONT_BODY,
+                cursor: isOk ? "pointer" : "not-allowed", opacity: isOk ? 1 : 0.6 }}>
+              Save & connect
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1449,16 +1604,55 @@ export default function App() {
 
   const [jiraPromptModal, setJiraPromptModal] = useState(null); // { topic, prompt }
 
+  // GitHub Gist sync state
+  const [gistConfig,     setGistConfig]     = useState(() => loadGistConfig());
+  const [showGistSetup,  setShowGistSetup]  = useState(false);
+  const [gistStatus,     setGistStatus]     = useState("idle"); // idle | saving | saved | error
+  const [gistConflict,   setGistConflict]   = useState(null);  // newer remote data to offer
+  const saveTimerRef  = useRef(null);
+  const lastSavedRef  = useRef(null); // tracks previous payload for rotation
+
   // Quarter-derived values
   const { year, q }    = quarter;
   const qWorkingDays   = useMemo(() => getQuarterWorkingDays(year, q), [year, q]);
   const qLabel         = quarterLabel(year, q);
   const qHolidays      = useMemo(() => getHolidaysInQuarter(year, q), [year, q]);
 
-  // Persist to localStorage
+  // Persist to localStorage (with savedAt timestamp for Sheets conflict detection)
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ topics, members, vacation })); } catch {}
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ topics, members, vacation, savedAt: Date.now() })); } catch {}
   }, [topics, members, vacation]);
+
+  // Auto-save to GitHub Gist (debounced)
+  useEffect(() => {
+    if (!gistConfig) return;
+    clearTimeout(saveTimerRef.current);
+    setGistStatus("saving");
+    const newData = { topics, members, vacation, savedAt: Date.now() };
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        await gistSave(gistConfig.token, gistConfig.gistId, newData, lastSavedRef.current);
+        lastSavedRef.current = newData;
+        setGistStatus("saved");
+        setTimeout(() => setGistStatus("idle"), 3000);
+      } catch {
+        setGistStatus("error");
+      }
+    }, GIST_DEBOUNCE);
+    return () => clearTimeout(saveTimerRef.current);
+  }, [topics, members, vacation, gistConfig]);
+
+  // On mount: check Gist for a newer version than localStorage
+  useEffect(() => {
+    if (!gistConfig) return;
+    gistFetch(gistConfig.token, gistConfig.gistId).then(remote => {
+      if (!remote?.topics) return;
+      const localSavedAt = (() => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY))?.savedAt || 0; } catch { return 0; } })();
+      if ((remote.savedAt || 0) > localSavedAt + 10000) {
+        setGistConflict(remote);
+      }
+    }).catch(() => {});
+  }, []);
 
   // Theme persistence
   useEffect(() => {
@@ -1544,6 +1738,17 @@ export default function App() {
           <span style={{ fontSize: 12, color: C.dim, marginLeft: 2 }}>{qLabel}</span>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
             <ThemeToggle isDark={isDark} onToggle={() => setIsDark((d) => !d)} />
+            {/* Gist status pill */}
+            <button onClick={() => setShowGistSetup(true)} title={gistConfig ? "GitHub Gist backup connected" : "Connect GitHub Gist backup"}
+              style={{ ...btn(gistStatus === "saved" ? "#00703C" : gistStatus === "error" ? C.red : gistConfig ? C.surfaceAlt : C.surfaceAlt,
+                gistStatus === "saved" ? "#fff" : gistStatus === "error" ? "#fff" : gistConfig ? "#4BAE4F" : C.dim),
+                border: `1px solid ${gistStatus === "error" ? C.red : gistConfig ? "color-mix(in srgb, #4BAE4F 40%, transparent)" : C.border}`,
+                padding: "5px 10px", fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}>
+              {gistStatus === "saving" ? "☁ Saving…"
+                : gistStatus === "saved"  ? "☁ Saved"
+                : gistStatus === "error"  ? "⚠ Gist error"
+                : gistConfig ? "☁ Gist" : "☁ Connect"}
+            </button>
             <button onClick={handleShare}
               style={{ ...btn(copied ? C.green : C.surfaceAlt, copied ? "#fff" : C.muted), border: `1px solid ${copied ? C.green : C.border}`, padding: "5px 12px", fontSize: 12, display: "flex", alignItems: "center", gap: 5 }}>
               {copied ? "✓ Link copied!" : "🔗 Share plan"}
@@ -1586,6 +1791,42 @@ export default function App() {
           prompt={jiraPromptModal.prompt}
           onClose={() => setJiraPromptModal(null)}
         />
+      )}
+
+      {/* GitHub Gist setup modal */}
+      {showGistSetup && (
+        <GistSetupModal
+          existing={gistConfig}
+          onSave={(cfg) => { saveGistConfig(cfg); setGistConfig(cfg); setShowGistSetup(false); setGistStatus("idle"); }}
+          onDisconnect={() => { saveGistConfig(null); setGistConfig(null); setShowGistSetup(false); setGistStatus("idle"); }}
+          onClose={() => setShowGistSetup(false)}
+        />
+      )}
+
+      {/* Newer version found in Gist banner */}
+      {gistConflict && (
+        <div style={{
+          position:"fixed", bottom:24, left:"50%", transform:"translateX(-50%)",
+          background:C.surface, border:`1px solid ${C.border}`, borderRadius:12,
+          padding:"14px 20px", boxShadow:"0 4px 24px rgba(0,0,0,0.18)",
+          display:"flex", alignItems:"center", gap:14, zIndex:400,
+          fontFamily:FONT_BODY, fontSize:13, maxWidth:480, width:"calc(100% - 32px)",
+        }}>
+          <span style={{ fontSize:20 }}>☁</span>
+          <div style={{ flex:1 }}>
+            <div style={{ fontWeight:600, color:C.text, marginBottom:2 }}>Newer version found in GitHub Gist</div>
+            <div style={{ color:C.muted, fontSize:12 }}>Saved on another device or browser. Load it?</div>
+          </div>
+          <button onClick={() => setGistConflict(null)} style={{ ...ghost, padding:"6px 12px", fontSize:12 }}>Dismiss</button>
+          <button onClick={() => {
+            setTopics(gistConflict.topics || []);
+            setMembers(gistConflict.members || INIT_MEMBERS);
+            setVacation(gistConflict.vacation || {});
+            setGistConflict(null);
+          }} style={{ background:"#107ACA", color:"#fff", border:"none", borderRadius:999, padding:"7px 16px", fontSize:13, fontWeight:700, fontFamily:FONT_BODY, cursor:"pointer" }}>
+            Load from Gist
+          </button>
+        </div>
       )}
     </div>
   );

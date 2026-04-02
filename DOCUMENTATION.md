@@ -20,7 +20,7 @@ A self-contained, single-file web application for planning and visualising desig
 | Build tool | esbuild (JSX → minified JS, bundled into the HTML) |
 | Styling | Inline React styles + CSS custom properties for theming |
 | Fonts | Montserrat (titles), Roboto (body) via Google Fonts |
-| Persistence | `localStorage` (key: `careco-planner-v1`) + URL hash sharing |
+| Persistence | `localStorage` (key: `careco-planner-v1`) + `?data=` query-param sharing + optional GitHub Gist auto-backup |
 | Hosting | GitHub Pages — `main` branch root of `david-vibedesign/careco-design-planner` |
 
 The deliverable is always **one self-contained HTML file** (`index.html` / `carecos-design-planner.html`). The JSX source lives alongside it as `carecos-design-planner.jsx`.
@@ -141,8 +141,74 @@ git push origin main --force
 
 ---
 
+## Jira Epic creation
+
+The **⚡ Jira** button on each topic card generates a ready-to-paste Claude prompt for creating a Jira Epic in the PDP project. No API token is required — the prompt works in any Claude interface that has Jira connected (Cowork, Claude.ai with Jira integration, Claude Code).
+
+### How it works
+
+1. Click ⚡ Jira on a topic — a modal opens showing the full generated prompt
+2. Click **Copy prompt** (or click the text area to select all, then Cmd+C)
+3. Paste into Claude — the prompt guides through: finding a parent Initiative on the correct feature team board, confirming all fields, then creating the Epic via the Jira REST API
+
+### What's pre-filled in every prompt
+
+| Field | Value |
+|-------|-------|
+| Jira site | doctolib.atlassian.net |
+| Project | PDP (ID: 11993) |
+| Issue type | Epic (ID: 10000) |
+| Domain | CARE COOPERATION (customfield_12263, option 17813) |
+| Category | CARE COOPERATION (customfield_11292, option 20030) |
+| Tempo Team | DESIGN – Cooperative Care (customfield_10911, value: 28 as Long) |
+| Feature Team | PHNX / NEMO / KITN based on topic team (customfield_12237) |
+
+Topic-specific fields (summary, description, assignee, collaborators, start date, due date, label) are pulled from the topic automatically.
+
+### Parent Initiative lookup
+
+The parent of a PDP Epic lives on the **feature team board** (KITN, PHNX, or NEMO), not in PDP itself. The prompt instructs Claude to search the correct board based on the topic's team assignment.
+
+### Known field quirks
+
+- `customfield_10911` (Tempo Team) requires a **plain number** (`28`), not a JSON object — this is noted in the prompt
+- Story points are not set via the API (not on the Epic creation screen in PDP); set manually in Jira after creation
+
+---
+
+## GitHub Gist auto-backup
+
+The **☁ Connect** button in the header lets you link a private GitHub Gist as a persistent backup — useful if you switch browsers, clear localStorage, or want to access your plan from multiple machines.
+
+### Setup
+
+1. Go to https://github.com/settings/tokens and create a **Classic** Personal Access Token (PAT) with the `gist` scope only.
+2. Click **☁ Connect** in the CareCo Design Planner header.
+3. Paste your PAT into the token field.
+4. Either paste an existing Gist ID, or click **Create new Gist** to auto-create a private one.
+5. Click **Test connection** — the status should turn green.
+6. Click **Save & connect** — the header pill will show **☁ Gist** and auto-save begins.
+
+### How it works
+
+Every change to topics, members, or vacation days triggers a debounced (4 s) `PATCH` to the GitHub Gist API. Two files are kept:
+
+| File | Purpose |
+|---|---|
+| `careco-planner-latest.json` | The most recent save |
+| `careco-planner-previous.json` | The save before that (one-version rollback) |
+
+On startup, if the Gist contains a version newer than localStorage (by more than 10 seconds), a banner appears offering to load it. The PAT and Gist ID are stored in localStorage under the key `careco-gist-config`; they never leave the browser except in the API call to GitHub.
+
+### Share Plan
+
+**Share Plan** now encodes data as a `?data=` query parameter instead of a URL hash. This works correctly when pasted into Slack, Google Meet chat, email, or any other channel that may strip URL fragments. Old `#`-hash links are still supported for backward compatibility.
+
+---
+
 ## Known constraints
 
 - No user authentication — the app is fully public if the GitHub Pages URL is shared
-- Data is browser-local; clearing browser data or switching browsers loses unsaved state (use Share Plan to back up)
+- Data is browser-local without Gist backup; clearing browser data or switching browsers loses unsaved state (use ☁ Connect or Share Plan to back up)
+- The GitHub PAT for Gist backup is stored in localStorage — anyone with access to your browser profile can read it; rotate the token if needed
 - Fonts (Montserrat, Roboto) require an internet connection to load from Google Fonts; the app still works without them, falling back to system fonts
