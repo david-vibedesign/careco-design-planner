@@ -249,29 +249,31 @@ function generateJiraPrompt(topic, members) {
     `- **Summary:** ${topic.title}`,
     topic.description ? `- **Description:** ${topic.description}` : null,
     `- **Label:** ${label}`,
-    `- **T-shirt size:** ${topic.size} → ${sz.days} working days, ~${points} story points`,
-    owner   ? `- **Assignee:** ${owner.name}`           : `- **Assignee:** (not set)`,
-    collabs ? `- **Collaborators:** ${collabs}`          : null,
-    topic.startDate ? `- **Start date:** ${topic.startDate}` : null,
-    endDate         ? `- **Due date:** ${endDate}`            : null,
-    `\n## Fixed CareCo fields — use exactly as listed`,
-    `- Jira site: doctolib.atlassian.net`,
-    `- Project: PDP (ID: ${JIRA_PROJECT_ID})`,
-    `- Issue type: Epic (ID: ${JIRA_EPIC_TYPE})`,
-    `- Domain → ${JF.domain}, option ID: ${JIRA_OPTS.domainCareCo} (CARE COOPERATION)`,
-    `- Category → ${JF.category}, option ID: ${JIRA_OPTS.categoryCareCo} (CARE COOPERATION)`,
-    `- Tempo Team → ${JF.tempoTeam}, value: ${JIRA_OPTS.tempoTeamCareCo} as a plain number/Long, not an object (DESIGN – Cooperative Care)`,
+    owner   ? `- **Assignee:** ${owner.name}`  : `- **Assignee:** (not set)`,
+    collabs ? `- **Collaborators:** ${collabs}` : null,
+    `\n## Field mapping — use these exact keys and formats in the API call`,
+    `- summary: "${topic.title}"`,
+    `- issuetype: { id: "${JIRA_EPIC_TYPE}" }`,
+    `- project: { id: "${JIRA_PROJECT_ID}" }`,
+    `- labels: ["${label}"]`,
+    topic.startDate ? `- ${JF.startDate}: "${topic.startDate}"   ← start date (ISO string, NOT "startDate")` : null,
+    endDate         ? `- duedate: "${endDate}"` : null,
+    `- ${JF.domain}: { id: "${JIRA_OPTS.domainCareCo}" }   ← CARE COOPERATION`,
+    `- ${JF.category}: { id: "${JIRA_OPTS.categoryCareCo}" }   ← CARE COOPERATION`,
+    `- ${JF.tempoTeam}: ${JIRA_OPTS.tempoTeamCareCo}   ← plain Long integer, NOT { id: 28 } or "28"`,
     ftId
-      ? `- Feature Team → ${JF.featureTeam}, option ID: ${ftId} (${topic.team})`
-      : `- Feature Team → ${JF.featureTeam}: leave blank (topic spans multiple teams)`,
+      ? `- ${JF.featureTeam}: { id: "${ftId}" }   ← ${topic.team}`
+      : `- ${JF.featureTeam}: omit (topic spans multiple teams)`,
+    `- parent: { key: "<INITIATIVE_KEY>" }   ← REQUIRED by PDP; must be set or creation will fail`,
+    `⚠️ Do NOT include a "story_points" field — it is not on the PDP Epic creation screen and will cause a 400 error.`,
     `\n## Steps to complete`,
     ftId
-      ? `1. Search the **${topic.team}** Jira project for existing Initiatives to use as this Epic's parent (the parent lives on the feature team board, not in PDP). Show me the top results and let me pick one (or skip).`
-      : `1. This topic spans multiple teams — ask the user which feature team board (KITN, PHNX, or NEMO) to search for a parent Initiative, or skip if not needed.`,
+      ? `1. ⚠️ REQUIRED: Search the **${topic.team}** Jira project for Initiatives (the parent lives on the feature team board, not in PDP). Show the top results and ask the user to pick one before proceeding — creation will fail without it.`
+      : `1. ⚠️ REQUIRED: Ask the user which feature team board (KITN, PHNX, or NEMO) to search for a parent Initiative — creation will fail without one.`,
     `2. Look up the Atlassian account ID${collabs ? "s" : ""} for: ${[owner?.name, ...([supporter1, supporter2].filter(Boolean).map(s => s.name))].filter(Boolean).join(", ")}.`,
-    `3. Show me a summary of all fields you will set before creating.`,
-    `4. Create the Epic via the Jira REST API (POST /rest/api/3/issue on doctolib.atlassian.net).`,
-    `5. Return the new issue key (e.g. PDP-123) and a direct link to open it.`,
+    `3. Show a full field summary for confirmation before creating.`,
+    `4. Create the Epic via POST /rest/api/3/issue on doctolib.atlassian.net.`,
+    `5. Return the new issue key (e.g. PDP-123) and a direct link.`,
   ].filter(Boolean).join("\n");
 }
 
