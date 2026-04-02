@@ -335,6 +335,15 @@ function ThemeToggle({ isDark, onToggle }) {
   );
 }
 
+// ─── Clickable title style ────────────────────────────────────────────────────
+
+const clickableTitle = {
+  cursor: "pointer",
+  textDecoration: "none",
+  borderBottom: "1px dashed transparent",
+  transition: "border-color 0.15s, color 0.15s",
+};
+
 // ─── TopicsTab ────────────────────────────────────────────────────────────────
 
 function TopicsTab({ topics, members, onAdd, onEdit, onDelete }) {
@@ -409,7 +418,13 @@ function TopicsTab({ topics, members, onAdd, onEdit, onDelete }) {
                 {/* Title row */}
                 <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7, flexWrap: "wrap" }}>
                   {t.priority && <span title="High priority" style={{ fontSize: 13 }}>⭐</span>}
-                  <span style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{t.title}</span>
+                  <span
+                    onClick={() => onEdit(t)}
+                    title="Click to edit"
+                    style={{ ...clickableTitle, fontWeight: 600, fontSize: 14, color: C.text }}
+                    onMouseEnter={e => { e.currentTarget.style.borderBottomColor = C.muted; e.currentTarget.style.color = C.muted; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderBottomColor = "transparent"; e.currentTarget.style.color = C.text; }}
+                  >{t.title}</span>
                   <Badge label={t.team} color={TEAM_COLORS[t.team]} />
                   <Badge label={t.type} color={C.dim} />
                 </div>
@@ -541,7 +556,7 @@ function TeamTab({ members, setMembers, vacation, setVacation }) {
 
 // ─── CapacityTab ──────────────────────────────────────────────────────────────
 
-function CapacityTab({ capacities, topics, members }) {
+function CapacityTab({ capacities, topics, members, onEdit }) {
   return (
     <div>
       {/* Cards */}
@@ -615,7 +630,13 @@ function CapacityTab({ capacities, topics, members }) {
                 }}>
                   <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
                     {t.priority && <span style={{ color: "#D29922" }}>⭐</span>}
-                    <span style={{ color: C.text }}>{t.title}</span>
+                    <span
+                      onClick={() => onEdit(t)}
+                      title="Click to edit"
+                      style={{ ...clickableTitle, color: C.text }}
+                      onMouseEnter={e => { e.currentTarget.style.borderBottomColor = C.muted; e.currentTarget.style.color = C.muted; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderBottomColor = "transparent"; e.currentTarget.style.color = C.text; }}
+                    >{t.title}</span>
                     <Badge label={t.team} color={TEAM_COLORS[t.team]} small />
                     <Badge label={t.size} color={SIZES[t.size].color} small />
                   </div>
@@ -636,7 +657,7 @@ function CapacityTab({ capacities, topics, members }) {
 
 // ─── TimelineTab ──────────────────────────────────────────────────────────────
 
-function TimelineTab({ timelineTopics, members, onUpdateTopicDate }) {
+function TimelineTab({ timelineTopics, members, onUpdateTopicDate, onEdit }) {
   const Q2_CAL_DAYS  = 91;
   const trackAreaRef = useRef(null);
   const dragRef      = useRef(null);
@@ -758,7 +779,14 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate }) {
               {/* Row label */}
               <div style={{ width: 200, flexShrink: 0, paddingRight: 10 }}>
                 <div style={{ fontSize: 12, fontWeight: 500, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {t.priority ? "⭐ " : ""}{t.title}
+                  {t.priority ? "⭐ " : ""}
+                  <span
+                    onClick={() => onEdit(t)}
+                    title="Click to edit"
+                    style={{ ...clickableTitle, fontWeight: 500, fontSize: 12 }}
+                    onMouseEnter={e => { e.currentTarget.style.borderBottomColor = C.muted; e.currentTarget.style.color = C.muted; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderBottomColor = "transparent"; e.currentTarget.style.color = ""; }}
+                  >{t.title}</span>
                 </div>
                 <div style={{ fontSize: 10, color: C.dim, display: "flex", gap: 5, alignItems: "center", marginTop: 1, flexWrap: "wrap" }}>
                   <span>{t.size}</span>
@@ -1258,8 +1286,8 @@ export default function App() {
       <div style={{ padding: "20px 24px", maxWidth: 1100, margin: "0 auto" }}>
         {tab === "topics"   && <TopicsTab   topics={topics} members={members} onAdd={openAdd} onEdit={openEdit} onDelete={deleteTopic} />}
         {tab === "team"     && <TeamTab     members={members} setMembers={setMembers} vacation={vacation} setVacation={setVacation} />}
-        {tab === "capacity" && <CapacityTab capacities={capacities} topics={topics} members={members} />}
-        {tab === "timeline" && <TimelineTab timelineTopics={timelineTopics} members={members} onUpdateTopicDate={updateTopicDate} />}
+        {tab === "capacity" && <CapacityTab capacities={capacities} topics={topics} members={members} onEdit={openEdit} />}
+        {tab === "timeline" && <TimelineTab timelineTopics={timelineTopics} members={members} onUpdateTopicDate={updateTopicDate} onEdit={openEdit} />}
       </div>
 
       {/* Modal */}
