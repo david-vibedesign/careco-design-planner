@@ -521,7 +521,11 @@ function GistSetupModal({ existing, onSave, onDisconnect, onClose }) {
       await gistFetch(token.trim(), gistId.trim());
       setStatus("ok");
     } catch (e) {
-      setErr(e.message.includes("401") ? "Invalid token — check it has the 'gist' scope." : e.message.includes("404") ? "Gist not found — check the Gist ID." : e.message);
+      const code = e.message.match(/\d{3}/)?.[0];
+      setErr(code === "401" ? "Invalid token — make sure it's a classic token with the 'gist' scope."
+           : code === "403" ? "Permission denied — token needs the 'gist' scope."
+           : code === "404" ? "Gist not found — check the Gist ID is correct."
+           : e.message);
       setStatus("error");
     }
   };
@@ -533,7 +537,11 @@ function GistSetupModal({ existing, onSave, onDisconnect, onClose }) {
       setGistId(id);
       setStatus("ok");
     } catch (e) {
-      setErr(e.message.includes("401") ? "Invalid token — check it has the 'gist' scope." : e.message);
+      const code = e.message.match(/\d{3}/)?.[0];
+      setErr(code === "401" ? "Invalid token — make sure it's a classic token with the 'gist' scope."
+           : code === "404" ? "Token doesn't support Gist API — you need a classic token (not fine-grained) with the 'gist' scope. Create one at github.com/settings/tokens"
+           : code === "403" ? "Permission denied — token needs the 'gist' scope."
+           : e.message);
       setStatus("error");
     }
   };
@@ -683,7 +691,7 @@ function JiraPromptModal({ topic, prompt, onClose }) {
 
 // ─── TopicsTab ────────────────────────────────────────────────────────────────
 
-function TopicsTab({ topics, members, onAdd, onEdit, onDelete, onJira }) {
+function TopicsTab({ topics, members, onAdd, onEdit, onDelete, onJira, readOnly }) {
   const [filter, setFilter]               = useState("all");
   const [sizeFilter, setSizeFilter]       = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
@@ -712,13 +720,15 @@ function TopicsTab({ topics, members, onAdd, onEdit, onDelete, onJira }) {
             }}>{f}</button>
           ))}
         </div>
-        <button onClick={onAdd} style={{
-          background: "#107ACA", color: "#fff", border: "none",
-          borderRadius: 999, padding: "9px 22px",
-          fontSize: 14, fontWeight: 700, fontFamily: "'Roboto', sans-serif",
-          cursor: "pointer", whiteSpace: "nowrap", letterSpacing: "0.01em",
-          display: "flex", alignItems: "center", gap: 6,
-        }}>+ Add Topic</button>
+        {!readOnly && (
+          <button onClick={() => onAdd(TEAMS.includes(filter) ? filter : null)} style={{
+            background: "#107ACA", color: "#fff", border: "none",
+            borderRadius: 999, padding: "9px 22px",
+            fontSize: 14, fontWeight: 700, fontFamily: "'Roboto', sans-serif",
+            cursor: "pointer", whiteSpace: "nowrap", letterSpacing: "0.01em",
+            display: "flex", alignItems: "center", gap: 6,
+          }}>+ Add Topic</button>
+        )}
       </div>
 
       {/* Summary / size filter */}
@@ -781,9 +791,9 @@ function TopicsTab({ topics, members, onAdd, onEdit, onDelete, onJira }) {
                 <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7, flexWrap: "wrap" }}>
                   {t.priority && <span title="High priority" style={{ fontSize: 13 }}>⭐</span>}
                   <span
-                    onClick={() => onEdit(t)}
-                    title="Click to edit"
-                    style={{ ...clickableTitle, fontWeight: 600, fontSize: 14, color: C.title, fontFamily: FONT_TITLE }}
+                    onClick={readOnly ? undefined : () => onEdit(t)}
+                    title={readOnly ? undefined : "Click to edit"}
+                    style={{ ...(!readOnly && clickableTitle), fontWeight: 600, fontSize: 14, color: C.title, fontFamily: FONT_TITLE }}
                     onMouseEnter={e => { e.currentTarget.style.borderBottomColor = C.muted; e.currentTarget.style.color = C.muted; }}
                     onMouseLeave={e => { e.currentTarget.style.borderBottomColor = "transparent"; e.currentTarget.style.color = C.title; }}
                   >{t.title}</span>
@@ -811,8 +821,8 @@ function TopicsTab({ topics, members, onAdd, onEdit, onDelete, onJira }) {
                 </div>
               </div>
 
-              {/* Actions / confirm */}
-              {isConfirming ? (
+              {/* Actions / confirm — hidden in read-only mode */}
+              {!readOnly && (isConfirming ? (
                 <DeleteConfirm
                   title={t.title}
                   onConfirm={() => { onDelete(t.id); setConfirmDeleteId(null); }}
@@ -834,7 +844,7 @@ function TopicsTab({ topics, members, onAdd, onEdit, onDelete, onJira }) {
                     style={{ ...ghost, padding: "4px 10px", color: C.red, borderColor: `color-mix(in srgb, ${C.red} 40%, transparent)` }}
                   >✕</button>
                 </div>
-              )}
+              ))}
             </div>
           </div>
         );
@@ -845,7 +855,7 @@ function TopicsTab({ topics, members, onAdd, onEdit, onDelete, onJira }) {
 
 // ─── TeamTab ──────────────────────────────────────────────────────────────────
 
-function TeamTab({ members, setMembers, vacation, setVacation, qWorkingDays, qLabel, qHolidays }) {
+function TeamTab({ members, setMembers, vacation, setVacation, qWorkingDays, qLabel, qHolidays, readOnly }) {
   const [dragId,  setDragId]  = useState(null);
   const [dropId,  setDropId]  = useState(null);
   const [colorPickerOpenId, setColorPickerOpenId] = useState(null);
@@ -899,13 +909,15 @@ function TeamTab({ members, setMembers, vacation, setVacation, qWorkingDays, qLa
           {qLabel}: <strong style={{ color: C.text }}>{qWorkingDays} working days</strong>
           <span style={{ marginLeft: 10, color: C.dim }}>· {qHolidays.length} NL holiday{qHolidays.length !== 1 ? "s" : ""}</span>
         </div>
-        <button onClick={addMember} style={{
-          background: "#107ACA", color: "#fff", border: "none",
-          borderRadius: 999, padding: "9px 22px",
-          fontSize: 14, fontWeight: 700, fontFamily: "'Roboto', sans-serif",
-          cursor: "pointer", whiteSpace: "nowrap", letterSpacing: "0.01em",
-          display: "flex", alignItems: "center", gap: 6,
-        }}>+ Add Designer</button>
+        {!readOnly && (
+          <button onClick={addMember} style={{
+            background: "#107ACA", color: "#fff", border: "none",
+            borderRadius: 999, padding: "9px 22px",
+            fontSize: 14, fontWeight: 700, fontFamily: "'Roboto', sans-serif",
+            cursor: "pointer", whiteSpace: "nowrap", letterSpacing: "0.01em",
+            display: "flex", alignItems: "center", gap: 6,
+          }}>+ Add Designer</button>
+        )}
       </div>
 
       {members.map((m) => {
@@ -914,30 +926,33 @@ function TeamTab({ members, setMembers, vacation, setVacation, qWorkingDays, qLa
         const isDropTarget = dropId === m.id && dragId !== m.id;
         return (
           <div key={m.id}
-            draggable
-            onDragStart={(e) => handleDragStart(e, m.id)}
-            onDragOver={(e) => handleDragOver(e, m.id)}
-            onDrop={(e) => handleDrop(e, m.id)}
-            onDragEnd={handleDragEnd}
+            draggable={!readOnly}
+            onDragStart={readOnly ? undefined : (e) => handleDragStart(e, m.id)}
+            onDragOver={readOnly ? undefined : (e) => handleDragOver(e, m.id)}
+            onDrop={readOnly ? undefined : (e) => handleDrop(e, m.id)}
+            onDragEnd={readOnly ? undefined : handleDragEnd}
             style={{
               ...card,
               opacity: isDragging ? 0.35 : 1,
               borderColor: isDropTarget ? C.muted : C.border,
               boxShadow: isDropTarget ? `0 0 0 2px ${C.dim}` : "none",
-              cursor: "grab",
+              cursor: readOnly ? "default" : "grab",
               transition: "opacity 0.15s, border-color 0.15s, box-shadow 0.15s",
             }}
           >
             <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", marginBottom: 4, position: "relative" }}>
-                {/* Drag handle */}
-                <span style={{ fontSize: 14, color: C.dim, cursor: "grab", userSelect: "none", flexShrink: 0 }} title="Drag to reorder">⠿</span>
-                {/* Color swatch button */}
-                <button
-                  onClick={() => setColorPickerOpenId(colorPickerOpenId === m.id ? null : m.id)}
-                  title="Pick colour"
-                  style={{ width: 18, height: 18, borderRadius: "50%", background: m.color, border: "2px solid transparent", outline: colorPickerOpenId === m.id ? `2px solid ${m.color}` : "none", outlineOffset: 2, cursor: "pointer", flexShrink: 0, padding: 0 }}
-                />
+                {/* Drag handle — hidden in read-only */}
+                {!readOnly && <span style={{ fontSize: 14, color: C.dim, cursor: "grab", userSelect: "none", flexShrink: 0 }} title="Drag to reorder">⠿</span>}
+                {/* Color swatch — hidden in read-only */}
+                {readOnly
+                  ? <span style={{ width: 18, height: 18, borderRadius: "50%", background: m.color, flexShrink: 0, display: "inline-block" }} />
+                  : <button
+                      onClick={() => setColorPickerOpenId(colorPickerOpenId === m.id ? null : m.id)}
+                      title="Pick colour"
+                      style={{ width: 18, height: 18, borderRadius: "50%", background: m.color, border: "2px solid transparent", outline: colorPickerOpenId === m.id ? `2px solid ${m.color}` : "none", outlineOffset: 2, cursor: "pointer", flexShrink: 0, padding: 0 }}
+                    />
+                }
                 {/* Inline colour picker */}
                 {colorPickerOpenId === m.id && (
                   <div style={{
@@ -966,29 +981,36 @@ function TeamTab({ members, setMembers, vacation, setVacation, qWorkingDays, qLa
                   {m.name || "Unnamed designer"}
                 </span>
                 <span style={{ fontSize: 12, color: C.muted }}>{m.role}</span>
-                <button
-                  onClick={() => removeMember(m.id)}
-                  title="Remove designer"
-                  style={{ ...ghost, marginLeft: "auto", padding: "2px 8px", fontSize: 12, color: C.dim, borderColor: "transparent" }}
-                >✕</button>
+                {!readOnly && (
+                  <button
+                    onClick={() => removeMember(m.id)}
+                    title="Remove designer"
+                    style={{ ...ghost, marginLeft: "auto", padding: "2px 8px", fontSize: 12, color: C.dim, borderColor: "transparent" }}
+                  >✕</button>
+                )}
               </div>
               <div style={{ flex: 2, minWidth: 160 }}>
                 <label style={lbl}>Name</label>
-                <input style={inp} value={m.name}
+                <input style={{ ...inp, ...(readOnly && { cursor: "default", opacity: 0.7 }) }} value={m.name}
                   placeholder="Full name"
-                  onChange={(e) => updateName(m.id, e.target.value)} />
+                  readOnly={readOnly}
+                  onChange={readOnly ? undefined : (e) => updateName(m.id, e.target.value)} />
               </div>
               <div style={{ flex: 2, minWidth: 160 }}>
                 <label style={lbl}>Role</label>
-                <select style={selInp} value={m.role} onChange={(e) => updateRole(m.id, e.target.value)}>
+                <select style={{ ...selInp, ...(readOnly && { cursor: "default", opacity: 0.7 }) }} value={m.role}
+                  disabled={readOnly}
+                  onChange={readOnly ? undefined : (e) => updateRole(m.id, e.target.value)}>
                   {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                 </select>
               </div>
               <div style={{ width: 120 }}>
                 <label style={lbl}>Vacation Days ({qLabel})</label>
-                <input type="number" min={0} max={qWorkingDays} style={inp}
+                <input type="number" min={0} max={qWorkingDays}
+                  style={{ ...inp, ...(readOnly && { cursor: "default", opacity: 0.7 }) }}
                   value={vacation[m.id] || 0}
-                  onChange={(e) => updateVac(m.id, e.target.value)} />
+                  readOnly={readOnly}
+                  onChange={readOnly ? undefined : (e) => updateVac(m.id, e.target.value)} />
               </div>
               <div style={{ fontSize: 13, color: C.muted, paddingBottom: 6 }}>
                 <span style={{ color: C.text, fontWeight: 600, fontSize: 18 }}>{avail}</span>
@@ -1028,36 +1050,123 @@ function TeamTab({ members, setMembers, vacation, setVacation, qWorkingDays, qLa
 
 // ─── CapacityTab ──────────────────────────────────────────────────────────────
 
-function CapacityTab({ capacities, topics, members, onEdit, qWorkingDays, qLabel }) {
+const DELV_COLOR = "#107ACA";  // blue  — delivery
+const DISC_COLOR = "#7C3AED";  // purple — discovery
+
+function CapacityTab({ capacities, topics, members, onEdit, qWorkingDays, qLabel, readOnly }) {
+  const [showDelivery,  setShowDelivery]  = useState(true);
+  const [showDiscovery, setShowDiscovery] = useState(true);
+
+  // Per-designer day breakdown split by type
+  const breakdown = useMemo(() => {
+    const map = {};
+    members.forEach(m => { map[m.id] = { deliveryDays: 0, discoveryDays: 0 }; });
+    topics.forEach(t => {
+      const sd      = SIZES[t.size]?.days || 0;
+      const hasSupp = !!(t.supporter1Id || t.supporter2Id);
+      const add = (memberId, pct) => {
+        if (!map[memberId]) return;
+        const days = sd * pct;
+        if (t.type === "discovery") map[memberId].discoveryDays += days;
+        else                        map[memberId].deliveryDays  += days;
+      };
+      if (t.ownerId)      add(t.ownerId,      hasSupp ? t.ownerPercent / 100 : 1);
+      if (t.supporter1Id) add(t.supporter1Id, t.supporter1Percent / 100);
+      if (t.supporter2Id) add(t.supporter2Id, t.supporter2Percent / 100);
+    });
+    return map;
+  }, [topics, members]);
+
+  const toggleBtn = (active, color, onClick, label) => (
+    <button onClick={onClick} style={{
+      ...ghost, padding: "5px 14px", fontSize: 12, fontWeight: 600, borderRadius: 999,
+      background:   active ? color          : C.surfaceAlt,
+      color:        active ? "#fff"         : C.muted,
+      borderColor:  active ? color          : C.border,
+      transition: "background 0.2s, color 0.2s, border-color 0.2s",
+    }}>{label}</button>
+  );
+
   return (
     <div>
+      {/* Type toggles */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12, color: C.dim, marginRight: 2 }}>Filter by type:</span>
+        {toggleBtn(showDelivery,  DELV_COLOR, () => setShowDelivery(v  => !v), "🚀 Delivery")}
+        {toggleBtn(showDiscovery, DISC_COLOR, () => setShowDiscovery(v => !v), "🔬 Discovery")}
+        {(!showDelivery || !showDiscovery) && (
+          <span style={{ fontSize: 11, color: C.dim, marginLeft: 4 }}>
+            {!showDelivery && !showDiscovery
+              ? "Nothing shown — enable at least one type"
+              : `Showing ${showDelivery ? "delivery" : "discovery"} only`}
+          </span>
+        )}
+      </div>
+
+      {/* Designer summary cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14, marginBottom: 24 }}>
         {capacities.map((c) => {
-          const pct  = c.availableDays > 0 ? Math.min(100, (c.allocatedDays / c.availableDays) * 100) : 0;
-          const over = c.allocatedDays > c.availableDays;
-          const barColor = over ? C.red : pct > 85 ? "#D29922" : c.color;
+          const bd          = breakdown[c.id] || { deliveryDays: 0, discoveryDays: 0 };
+          const visDel      = showDelivery  ? bd.deliveryDays  : 0;
+          const visDisc     = showDiscovery ? bd.discoveryDays : 0;
+          const visTotal    = visDel + visDisc;
+          const over        = visTotal > c.availableDays;
+          const avail       = c.availableDays;
+
+          // Bar segment widths, capped at 100% together
+          const delPct  = avail > 0 ? Math.min(100,          (visDel  / avail) * 100) : 0;
+          const discPct = avail > 0 ? Math.min(100 - delPct, (visDisc / avail) * 100) : 0;
+
           return (
             <div key={c.id} style={{ ...card }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              {/* Name row */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
                 <div style={{ width: 10, height: 10, borderRadius: "50%", background: c.color }} />
                 <span style={{ fontWeight: 600, fontSize: 14, color: C.title, fontFamily: FONT_TITLE }}>{c.name}</span>
               </div>
-              <div style={{ fontSize: 12, color: C.muted, marginBottom: 14 }}>{c.role}</div>
+              <div style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>{c.role}</div>
+
+              {/* Mini legend */}
+              <div style={{ display: "flex", gap: 12, marginBottom: 8, fontSize: 11, color: C.muted, flexWrap: "wrap" }}>
+                <span style={{ opacity: showDelivery ? 1 : 0.4, transition: "opacity 0.2s" }}>
+                  <span style={{ color: DELV_COLOR, fontWeight: 700 }}>■</span> Delivery {bd.deliveryDays.toFixed(1)}d
+                </span>
+                <span style={{ opacity: showDiscovery ? 1 : 0.4, transition: "opacity 0.2s" }}>
+                  <span style={{ color: DISC_COLOR, fontWeight: 700 }}>■</span> Discovery {bd.discoveryDays.toFixed(1)}d
+                </span>
+              </div>
+
+              {/* Split progress bar */}
               <div style={{ marginBottom: 10 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.muted, marginBottom: 5 }}>
                   <span>Allocated ({qLabel})</span>
                   <span style={{ color: over ? C.red : C.text, fontWeight: 600 }}>
-                    {c.allocatedDays.toFixed(1)} / {c.availableDays}d
+                    {visTotal.toFixed(1)} / {avail}d
                   </span>
                 </div>
-                <div style={{ height: 8, background: C.bg, borderRadius: 4, overflow: "hidden" }}>
-                  <div style={{ height: "100%", borderRadius: 4, width: `${pct}%`, background: barColor, transition: "width 0.4s" }} />
+                <div style={{ height: 10, background: C.bg, borderRadius: 5, overflow: "hidden", display: "flex" }}>
+                  <div style={{
+                    height: "100%", width: `${delPct}%`,
+                    background: over ? C.red : DELV_COLOR,
+                    borderRadius: discPct > 0 ? "5px 0 0 5px" : 5,
+                    transition: "width 0.35s ease, background 0.2s",
+                  }} />
+                  <div style={{
+                    height: "100%", width: `${discPct}%`,
+                    background: over ? C.red : DISC_COLOR,
+                    borderRadius: delPct > 0 ? "0 5px 5px 0" : 5,
+                    transition: "width 0.35s ease, background 0.2s",
+                  }} />
                 </div>
               </div>
+
+              {/* Footer */}
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
-                <span style={{ color: C.dim }}>{c.availableDays}d available</span>
+                <span style={{ color: C.dim }}>{avail}d available</span>
                 <span style={{ color: over ? C.red : "#3FB950", fontWeight: 600 }}>
-                  {over ? `${(c.allocatedDays - c.availableDays).toFixed(1)}d over` : `${c.remaining.toFixed(1)}d free`}
+                  {over
+                    ? `${(visTotal - avail).toFixed(1)}d over`
+                    : `${(avail - visTotal).toFixed(1)}d free`}
                 </span>
               </div>
             </div>
@@ -1065,6 +1174,7 @@ function CapacityTab({ capacities, topics, members, onEdit, qWorkingDays, qLabel
         })}
       </div>
 
+      {/* Per-designer topic lists */}
       {capacities.map((c) => {
         const myTopics = topics.filter((t) => t.ownerId === c.id || t.supporter1Id === c.id || t.supporter2Id === c.id);
         if (!myTopics.length) return null;
@@ -1075,30 +1185,43 @@ function CapacityTab({ capacities, topics, members, onEdit, qWorkingDays, qLabel
               {c.name}'s Topics
             </div>
             {myTopics.map((t) => {
-              const isOwner = t.ownerId === c.id;
-              const isSupp1 = t.supporter1Id === c.id;
-              const hasSupp = !!(t.supporter1Id || t.supporter2Id);
-              const pct     = isOwner ? (hasSupp ? t.ownerPercent / 100 : 1) : isSupp1 ? t.supporter1Percent / 100 : t.supporter2Percent / 100;
-              const days    = SIZES[t.size].days * pct;
+              const isOwner  = t.ownerId === c.id;
+              const isSupp1  = t.supporter1Id === c.id;
+              const hasSupp  = !!(t.supporter1Id || t.supporter2Id);
+              const pct      = isOwner ? (hasSupp ? t.ownerPercent / 100 : 1) : isSupp1 ? t.supporter1Percent / 100 : t.supporter2Percent / 100;
+              const days     = SIZES[t.size].days * pct;
+              const isActive = (t.type === "delivery" && showDelivery) || (t.type === "discovery" && showDiscovery);
+              const typeColor = t.type === "discovery" ? DISC_COLOR : DELV_COLOR;
               return (
                 <div key={t.id} style={{
                   display: "flex", justifyContent: "space-between", alignItems: "center",
                   padding: "7px 0", borderBottom: `1px solid ${C.border}`, fontSize: 13,
+                  opacity: isActive ? 1 : 0.35,
+                  transition: "opacity 0.2s",
                 }}>
                   <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
                     {t.priority && <span style={{ color: "#D29922" }}>⭐</span>}
+                    {/* Type badge */}
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase",
+                      color: typeColor, border: `1px solid ${typeColor}`, borderRadius: 3, padding: "1px 4px",
+                    }}>{t.type}</span>
                     <span
-                      onClick={() => onEdit(t)}
-                      title="Click to edit"
-                      style={{ ...clickableTitle, color: C.title, fontFamily: FONT_TITLE, fontWeight: 600 }}
-                      onMouseEnter={e => { e.currentTarget.style.borderBottomColor = C.muted; e.currentTarget.style.color = C.muted; }}
-                      onMouseLeave={e => { e.currentTarget.style.borderBottomColor = "transparent"; e.currentTarget.style.color = C.title; }}
+                      onClick={readOnly ? undefined : () => onEdit(t)}
+                      title={readOnly ? undefined : "Click to edit"}
+                      style={{
+                        ...(!readOnly && clickableTitle),
+                        color: C.title, fontFamily: FONT_TITLE, fontWeight: 600,
+                        textDecoration: isActive ? "none" : "line-through",
+                      }}
+                      onMouseEnter={readOnly ? undefined : e => { e.currentTarget.style.borderBottomColor = C.muted; e.currentTarget.style.color = C.muted; }}
+                      onMouseLeave={readOnly ? undefined : e => { e.currentTarget.style.borderBottomColor = "transparent"; e.currentTarget.style.color = C.title; }}
                     >{t.title}</span>
                     <Badge label={t.team} color={TEAM_COLORS[t.team]} small />
                     <Badge label={t.size} color={SIZES[t.size].color} small />
                   </div>
-                  <div style={{ color: C.muted, flexShrink: 0, paddingLeft: 12 }}>
-                    <span style={{ color: isOwner ? C.text : C.muted }}>
+                  <div style={{ flexShrink: 0, paddingLeft: 12 }}>
+                    <span style={{ color: isOwner ? C.text : C.muted, fontSize: 12 }}>
                       {isOwner ? "Owner" : "Supporter"} · {days.toFixed(1)}d
                     </span>
                   </div>
@@ -1114,7 +1237,7 @@ function CapacityTab({ capacities, topics, members, onEdit, qWorkingDays, qLabel
 
 // ─── TimelineTab ──────────────────────────────────────────────────────────────
 
-function TimelineTab({ timelineTopics, members, onUpdateTopicDate, onEdit, quarter, onPrevQuarter, onNextQuarter }) {
+function TimelineTab({ timelineTopics, members, onUpdateTopicDate, onEdit, quarter, onPrevQuarter, onNextQuarter, readOnly }) {
   const [sortBy, setSortBy] = useState("date"); // "date" | "owner" | "team"
   const { year, q } = quarter;
   const { start: Q_START, end: Q_END } = getQuarterBounds(year, q);
@@ -1180,6 +1303,7 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate, onEdit, quart
   }, [onUpdateTopicDate, dayOffset, dateFromOffset, Q_CAL_DAYS]);
 
   const handleBarMouseDown = (e, topic) => {
+    if (readOnly) return;
     e.preventDefault();
     dragRef.current = { topicId: topic.id, originX: e.clientX, originDate: topic.startDate };
     setDragState({ topicId: topic.id, newDate: topic.startDate });
@@ -1300,9 +1424,9 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate, onEdit, quart
                     <div style={{ fontSize: 12, fontWeight: 600, color: C.title, fontFamily: FONT_TITLE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {t.priority ? "⭐ " : ""}
                       <span
-                        onClick={() => onEdit(t)}
-                        title="Click to edit"
-                        style={{ ...clickableTitle, fontWeight: 600, fontSize: 12 }}
+                        onClick={readOnly ? undefined : () => onEdit(t)}
+                        title={readOnly ? undefined : "Click to edit"}
+                        style={{ ...(!readOnly && clickableTitle), fontWeight: 600, fontSize: 12 }}
                         onMouseEnter={e => { e.currentTarget.style.borderBottomColor = C.muted; e.currentTarget.style.color = C.muted; }}
                         onMouseLeave={e => { e.currentTarget.style.borderBottomColor = "transparent"; e.currentTarget.style.color = C.title; }}
                       >{t.title}</span>
@@ -1332,12 +1456,12 @@ function TimelineTab({ timelineTopics, members, onUpdateTopicDate, onEdit, quart
                     {startOff < Q_CAL_DAYS && startOff + dur > 0 && (
                       <div
                         onMouseDown={(e) => handleBarMouseDown(e, t)}
-                        title={`${t.title}\n${effectiveStart} → ${fmt(effectiveEnd)}\nDrag to reschedule`}
+                        title={readOnly ? `${t.title}\n${effectiveStart} → ${fmt(effectiveEnd)}` : `${t.title}\n${effectiveStart} → ${fmt(effectiveEnd)}\nDrag to reschedule`}
                         style={{
                           position: "absolute", left: `${left}%`, width: `${Math.max(width, 0.8)}%`,
                           height: "100%", borderRadius: 4, display: "flex", overflow: "hidden",
                           opacity: isDragging ? 0.8 : 0.9,
-                          cursor: isDragging ? "grabbing" : "grab",
+                          cursor: readOnly ? "default" : isDragging ? "grabbing" : "grab",
                           boxSizing: "border-box",
                           boxShadow: isDragging ? `0 0 0 2px ${owner?.color || TEAM_COLORS[t.team] || "#fff"}, 0 4px 12px rgba(0,0,0,0.4)` : "none",
                         }}
@@ -1445,10 +1569,17 @@ function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
           </div>
           <div style={{ flex: 1 }}>
             <label style={lbl}>Type</label>
-            <select style={selInp} value={form.type} onChange={(e) => set("type", e.target.value)}>
-              <option value="discovery">Discovery</option>
-              <option value="delivery">Delivery</option>
-            </select>
+            <div style={{ display: "flex", borderRadius: 8, overflow: "hidden", border: `1px solid ${C.border}` }}>
+              {[["discovery", "🔬 Discovery", DISC_COLOR], ["delivery", "🚀 Delivery", DELV_COLOR]].map(([val, label, color]) => (
+                <button key={val} onClick={() => set("type", val)} type="button" style={{
+                  flex: 1, padding: "7px 0", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer",
+                  fontFamily: FONT_BODY,
+                  background: form.type === val ? color : C.surfaceAlt,
+                  color:      form.type === val ? "#fff" : C.muted,
+                  transition: "background 0.15s, color 0.15s",
+                }}>{label}</button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -1504,7 +1635,17 @@ function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
               <label style={lbl}>Owner %</label>
               <input type="number" min={0} max={100} style={inp}
                 value={form.ownerPercent}
-                onChange={(e) => set("ownerPercent", Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))} />
+                onChange={(e) => {
+                  const v = Math.min(100, Math.max(0, parseInt(e.target.value) || 0));
+                  // With exactly 1 supporter, auto-balance the other side
+                  if (hasSupp1 && !hasSupp2) {
+                    setForm(p => ({ ...p, ownerPercent: v, supporter1Percent: 100 - v }));
+                  } else if (hasSupp2 && !hasSupp1) {
+                    setForm(p => ({ ...p, ownerPercent: v, supporter2Percent: 100 - v }));
+                  } else {
+                    set("ownerPercent", v);
+                  }
+                }} />
             </div>
           )}
         </div>
@@ -1531,7 +1672,15 @@ function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
               <label style={lbl}>Supporter 1 %</label>
               <input type="number" min={0} max={100} style={inp}
                 value={form.supporter1Percent}
-                onChange={(e) => set("supporter1Percent", Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))} />
+                onChange={(e) => {
+                  const v = Math.min(100, Math.max(0, parseInt(e.target.value) || 0));
+                  // With exactly 1 supporter, auto-balance owner
+                  if (!hasSupp2) {
+                    setForm(p => ({ ...p, supporter1Percent: v, ownerPercent: 100 - v }));
+                  } else {
+                    set("supporter1Percent", v);
+                  }
+                }} />
             </div>
           )}
         </div>
@@ -1559,7 +1708,15 @@ function TopicFormModal({ form, setForm, members, onSave, onClose, isEdit }) {
               <label style={lbl}>Supporter 2 %</label>
               <input type="number" min={0} max={100} style={inp}
                 value={form.supporter2Percent}
-                onChange={(e) => set("supporter2Percent", Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))} />
+                onChange={(e) => {
+                  const v = Math.min(100, Math.max(0, parseInt(e.target.value) || 0));
+                  // With exactly 1 supporter (supporter2 only), auto-balance owner
+                  if (!hasSupp1) {
+                    setForm(p => ({ ...p, supporter2Percent: v, ownerPercent: 100 - v }));
+                  } else {
+                    set("supporter2Percent", v);
+                  }
+                }} />
             </div>
           )}
         </div>
@@ -1597,6 +1754,12 @@ export default function App() {
   const [members,  setMembers]  = useState(_init?.members  || INIT_MEMBERS);
   const [vacation, setVacation] = useState(_init?.vacation || { m1: 0, m2: 0, m3: 0, m4: 0 });
   const [topics,   setTopics]   = useState(_init?.topics   || []);
+
+  // Read-only mode: active when the app was opened via a shared ?data= link
+  const isReadOnly = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return !!params.get("data");
+  }, []);
 
   const [showForm, setShowForm] = useState(false);
   const [editId,   setEditId]   = useState(null);
@@ -1675,7 +1838,7 @@ export default function App() {
     });
   }, [topics, members, vacation]);
 
-  const openAdd  = () => { setForm(makeEmptyForm()); setEditId(null); setShowForm(true); };
+  const openAdd  = (teamHint) => { setForm({ ...makeEmptyForm(), ...(teamHint ? { team: teamHint } : {}) }); setEditId(null); setShowForm(true); };
   const openEdit = (t) => { setForm({ ...t }); setEditId(t.id); setShowForm(true); };
 
   const saveTopic = () => {
@@ -1738,17 +1901,22 @@ export default function App() {
           <span style={{ fontSize: 12, color: C.dim, marginLeft: 2 }}>{qLabel}</span>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
             <ThemeToggle isDark={isDark} onToggle={() => setIsDark((d) => !d)} />
-            {/* Gist status pill */}
-            <button onClick={() => setShowGistSetup(true)} title={gistConfig ? "GitHub Gist backup connected" : "Connect GitHub Gist backup"}
-              style={{ ...btn(gistStatus === "saved" ? "#00703C" : gistStatus === "error" ? C.red : gistConfig ? C.surfaceAlt : C.surfaceAlt,
-                gistStatus === "saved" ? "#fff" : gistStatus === "error" ? "#fff" : gistConfig ? "#4BAE4F" : C.dim),
-                border: `1px solid ${gistStatus === "error" ? C.red : gistConfig ? "color-mix(in srgb, #4BAE4F 40%, transparent)" : C.border}`,
-                padding: "5px 10px", fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}>
-              {gistStatus === "saving" ? "☁ Saving…"
-                : gistStatus === "saved"  ? "☁ Saved"
-                : gistStatus === "error"  ? "⚠ Gist error"
-                : gistConfig ? "☁ Gist" : "☁ Connect"}
-            </button>
+            {/* Read-only badge OR Gist status pill */}
+            {isReadOnly
+              ? <span style={{ fontSize: 11, color: C.muted, background: C.surfaceAlt, border: `1px solid ${C.border}`, borderRadius: 999, padding: "5px 10px", display: "flex", alignItems: "center", gap: 4 }}>
+                  👁 View only
+                </span>
+              : <button onClick={() => setShowGistSetup(true)} title={gistConfig ? "GitHub Gist backup connected" : "Connect GitHub Gist backup"}
+                  style={{ ...btn(gistStatus === "saved" ? "#00703C" : gistStatus === "error" ? C.red : gistConfig ? C.surfaceAlt : C.surfaceAlt,
+                    gistStatus === "saved" ? "#fff" : gistStatus === "error" ? "#fff" : gistConfig ? "#4BAE4F" : C.dim),
+                    border: `1px solid ${gistStatus === "error" ? C.red : gistConfig ? "color-mix(in srgb, #4BAE4F 40%, transparent)" : C.border}`,
+                    padding: "5px 10px", fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}>
+                  {gistStatus === "saving" ? "☁ Saving…"
+                    : gistStatus === "saved"  ? "☁ Saved"
+                    : gistStatus === "error"  ? "⚠ Gist error"
+                    : gistConfig ? "☁ Gist" : "☁ Connect"}
+                </button>
+            }
             <button onClick={handleShare}
               style={{ ...btn(copied ? C.green : C.surfaceAlt, copied ? "#fff" : C.muted), border: `1px solid ${copied ? C.green : C.border}`, padding: "5px 12px", fontSize: 12, display: "flex", alignItems: "center", gap: 5 }}>
               {copied ? "✓ Link copied!" : "🔗 Share plan"}
@@ -1768,15 +1936,24 @@ export default function App() {
         </div>
       </div>
 
+      {/* View-only banner */}
+      {isReadOnly && (
+        <div style={{ background: "color-mix(in srgb, #107ACA 12%, transparent)", borderBottom: `1px solid color-mix(in srgb, #107ACA 30%, transparent)`, padding: "8px 24px", display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#107ACA" }}>
+          <span>👁</span>
+          <span>You're viewing a shared plan. Open the link in your own browser to edit.</span>
+        </div>
+      )}
+
       {/* Content */}
       <div style={{ padding: "20px 24px", maxWidth: 1100, margin: "0 auto" }}>
-        {tab === "topics"   && <TopicsTab   topics={topics} members={members} onAdd={openAdd} onEdit={openEdit} onDelete={deleteTopic} onJira={openJiraPrompt} />}
-        {tab === "team"     && <TeamTab     members={members} setMembers={setMembers} vacation={vacation} setVacation={setVacation} qWorkingDays={qWorkingDays} qLabel={qLabel} qHolidays={qHolidays} />}
-        {tab === "capacity" && <CapacityTab capacities={capacities} topics={topics} members={members} onEdit={openEdit} qWorkingDays={qWorkingDays} qLabel={qLabel} />}
+        {tab === "topics"   && <TopicsTab   topics={topics} members={members} onAdd={openAdd} onEdit={openEdit} onDelete={deleteTopic} onJira={openJiraPrompt} readOnly={isReadOnly} />}
+        {tab === "team"     && <TeamTab     members={members} setMembers={setMembers} vacation={vacation} setVacation={setVacation} qWorkingDays={qWorkingDays} qLabel={qLabel} qHolidays={qHolidays} readOnly={isReadOnly} />}
+        {tab === "capacity" && <CapacityTab capacities={capacities} topics={topics} members={members} onEdit={openEdit} qWorkingDays={qWorkingDays} qLabel={qLabel} readOnly={isReadOnly} />}
         {tab === "timeline" && <TimelineTab timelineTopics={timelineTopics} members={members} onUpdateTopicDate={updateTopicDate} onEdit={openEdit}
           quarter={quarter}
           onPrevQuarter={() => setQuarter((q) => prevQuarter(q.year, q.q))}
-          onNextQuarter={() => setQuarter((q) => nextQuarter(q.year, q.q))} />}
+          onNextQuarter={() => setQuarter((q) => nextQuarter(q.year, q.q))}
+          readOnly={isReadOnly} />}
       </div>
 
       {showForm && (
