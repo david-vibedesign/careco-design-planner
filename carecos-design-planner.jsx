@@ -4,12 +4,18 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 
 const STORAGE_KEY = "careco-planner-v1";
 
+// Safe base64 decode — handles both standard and URL-safe base64 (no +/= issues)
+function safeAtob(str) {
+  return atob(str.replace(/-/g, "+").replace(/_/g, "/"));
+}
+
 function loadInitialState() {
   try {
     const params = new URLSearchParams(window.location.search);
-    const data = params.get("data") || window.location.hash.slice(1); // also supports old hash links
-    if (data) {
-      const state = JSON.parse(atob(data));
+    const data = params.get("data") || window.location.hash.slice(1);
+    // Compressed URLs (start with "z:") are handled asynchronously in a useEffect
+    if (data && !data.startsWith("z:")) {
+      const state = JSON.parse(safeAtob(data));
       if (state?.topics) return state;
     }
   } catch {}
@@ -18,6 +24,41 @@ function loadInitialState() {
     if (saved) return JSON.parse(saved);
   } catch {}
   return null;
+}
+
+// Compress JSON string → URL-safe base64 with "z:" prefix
+// Uses native CompressionStream (Chrome 80+, Firefox 113+, Safari 16.4+)
+async function compressForUrl(str) {
+  try {
+    const cs = new CompressionStream("deflate-raw");
+    const writer = cs.writable.getWriter();
+    writer.write(new TextEncoder().encode(str));
+    writer.close();
+    const buf = await new Response(cs.readable).arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = "";
+    // Chunk to avoid call-stack limit on large payloads
+    for (let i = 0; i < bytes.length; i += 0x8000)
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return "z:" + btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+  } catch {
+    // Fallback: plain URL-safe base64 (no compression)
+    return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+  }
+}
+
+// Decompress a "z:"-prefixed URL-safe base64 string back to JSON
+async function decompressFromUrl(encoded) {
+  if (encoded.startsWith("z:")) {
+    const b64 = encoded.slice(2).replace(/-/g, "+").replace(/_/g, "/");
+    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    const ds = new DecompressionStream("deflate-raw");
+    const writer = ds.writable.getWriter();
+    writer.write(bytes);
+    writer.close();
+    return new TextDecoder().decode(await new Response(ds.readable).arrayBuffer());
+  }
+  return safeAtob(encoded);
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -1817,6 +1858,19 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
+  // On mount: async-decompress compressed ?data=z:... share URLs
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const data = params.get("data") || window.location.hash.slice(1);
+    if (!data?.startsWith("z:")) return;
+    decompressFromUrl(data).then(json => {
+      const state = JSON.parse(json);
+      if (state?.topics)  setTopics(state.topics);
+      if (state?.members) setMembers(state.members);
+      if (state?.vacation) setVacation(state.vacation);
+    }).catch(() => {});
+  }, []);
+
   // Theme persistence
   useEffect(() => {
     try { localStorage.setItem("careco-theme", isDark ? "dark" : "light"); } catch {}
@@ -1825,14 +1879,13 @@ export default function App() {
     try { const s = localStorage.getItem("careco-theme"); if (s === "light") setIsDark(false); } catch {}
   }, []);
 
-  const handleShare = useCallback(() => {
-    const encoded = btoa(JSON.stringify({ topics, members, vacation }));
+  const handleShare = useCallback(async () => {
+    const encoded = await compressForUrl(JSON.stringify({ topics, members, vacation }));
     const base = window.location.href.split("?")[0].split("#")[0];
     const url = `${base}?data=${encoded}`;
     navigator.clipboard.writeText(url).then(() => {
       setCopied(true); setTimeout(() => setCopied(false), 2500);
     }).catch(() => {
-      // Fallback: update the address bar so the user can copy manually
       window.history.replaceState(null, "", `?data=${encoded}`);
       setCopied(true); setTimeout(() => setCopied(false), 2500);
     });
