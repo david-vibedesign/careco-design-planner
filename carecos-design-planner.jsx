@@ -1097,12 +1097,20 @@ const DISC_COLOR = "#7C3AED";  // purple — discovery
 function CapacityTab({ capacities, topics, members, onEdit, qWorkingDays, qLabel, readOnly }) {
   const [showDelivery,  setShowDelivery]  = useState(true);
   const [showDiscovery, setShowDiscovery] = useState(true);
+  const [hiddenTopics,  setHiddenTopics]  = useState(() => new Set());
 
-  // Per-designer day breakdown split by type
+  const toggleHidden = (topicId) => setHiddenTopics(prev => {
+    const next = new Set(prev);
+    next.has(topicId) ? next.delete(topicId) : next.add(topicId);
+    return next;
+  });
+
+  // Per-designer day breakdown split by type, excluding manually hidden topics
   const breakdown = useMemo(() => {
     const map = {};
     members.forEach(m => { map[m.id] = { deliveryDays: 0, discoveryDays: 0 }; });
     topics.forEach(t => {
+      if (hiddenTopics.has(t.id)) return; // excluded by user
       const sd      = SIZES[t.size]?.days || 0;
       const hasSupp = !!(t.supporter1Id || t.supporter2Id);
       const add = (memberId, pct) => {
@@ -1116,7 +1124,7 @@ function CapacityTab({ capacities, topics, members, onEdit, qWorkingDays, qLabel
       if (t.supporter2Id) add(t.supporter2Id, t.supporter2Percent / 100);
     });
     return map;
-  }, [topics, members]);
+  }, [topics, members, hiddenTopics]);
 
   const toggleBtn = (active, color, onClick, label) => (
     <button onClick={onClick} style={{
@@ -1130,7 +1138,7 @@ function CapacityTab({ capacities, topics, members, onEdit, qWorkingDays, qLabel
 
   return (
     <div>
-      {/* Type toggles */}
+      {/* Type toggles + reset */}
       <div style={{ display: "flex", gap: 8, marginBottom: 20, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ fontSize: 12, color: C.dim, marginRight: 2 }}>Filter by type:</span>
         {toggleBtn(showDelivery,  DELV_COLOR, () => setShowDelivery(v  => !v), "🚀 Delivery")}
@@ -1141,6 +1149,17 @@ function CapacityTab({ capacities, topics, members, onEdit, qWorkingDays, qLabel
               ? "Nothing shown — enable at least one type"
               : `Showing ${showDelivery ? "delivery" : "discovery"} only`}
           </span>
+        )}
+        {hiddenTopics.size > 0 && (
+          <>
+            <span style={{ fontSize: 12, color: C.dim, margin: "0 2px" }}>·</span>
+            <span style={{ fontSize: 11, color: C.muted }}>
+              {hiddenTopics.size} topic{hiddenTopics.size > 1 ? "s" : ""} hidden
+            </span>
+            <button onClick={() => setHiddenTopics(new Set())} style={{
+              ...ghost, padding: "3px 10px", fontSize: 11, borderRadius: 999,
+            }}>Show all</button>
+          </>
         )}
       </div>
 
@@ -1226,12 +1245,14 @@ function CapacityTab({ capacities, topics, members, onEdit, qWorkingDays, qLabel
               {c.name}'s Topics
             </div>
             {myTopics.map((t) => {
-              const isOwner  = t.ownerId === c.id;
-              const isSupp1  = t.supporter1Id === c.id;
-              const hasSupp  = !!(t.supporter1Id || t.supporter2Id);
-              const pct      = isOwner ? (hasSupp ? t.ownerPercent / 100 : 1) : isSupp1 ? t.supporter1Percent / 100 : t.supporter2Percent / 100;
-              const days     = SIZES[t.size].days * pct;
-              const isActive = (t.type === "delivery" && showDelivery) || (t.type === "discovery" && showDiscovery);
+              const isOwner   = t.ownerId === c.id;
+              const isSupp1   = t.supporter1Id === c.id;
+              const hasSupp   = !!(t.supporter1Id || t.supporter2Id);
+              const pct       = isOwner ? (hasSupp ? t.ownerPercent / 100 : 1) : isSupp1 ? t.supporter1Percent / 100 : t.supporter2Percent / 100;
+              const days      = SIZES[t.size].days * pct;
+              const isManuallyHidden = hiddenTopics.has(t.id);
+              const isTypeHidden     = !((t.type === "delivery" && showDelivery) || (t.type === "discovery" && showDiscovery));
+              const isActive  = !isManuallyHidden && !isTypeHidden;
               const typeColor = t.type === "discovery" ? DISC_COLOR : DELV_COLOR;
               return (
                 <div key={t.id} style={{
@@ -1240,7 +1261,7 @@ function CapacityTab({ capacities, topics, members, onEdit, qWorkingDays, qLabel
                   opacity: isActive ? 1 : 0.35,
                   transition: "opacity 0.2s",
                 }}>
-                  <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap", flex: 1, minWidth: 0 }}>
                     {t.priority && <span style={{ color: "#D29922" }}>⭐</span>}
                     {/* Type badge */}
                     <span style={{
@@ -1261,10 +1282,22 @@ function CapacityTab({ capacities, topics, members, onEdit, qWorkingDays, qLabel
                     <Badge label={t.team} color={TEAM_COLORS[t.team]} small />
                     <Badge label={t.size} color={SIZES[t.size].color} small />
                   </div>
-                  <div style={{ flexShrink: 0, paddingLeft: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, paddingLeft: 12 }}>
                     <span style={{ color: isOwner ? C.text : C.muted, fontSize: 12 }}>
                       {isOwner ? "Owner" : "Supporter"} · {days.toFixed(1)}d
                     </span>
+                    <button
+                      onClick={() => toggleHidden(t.id)}
+                      title={isManuallyHidden ? "Include in capacity" : "Exclude from capacity"}
+                      style={{
+                        background: isManuallyHidden ? C.surfaceAlt : "transparent",
+                        border: `1px solid ${C.border}`, borderRadius: 4,
+                        cursor: "pointer", padding: "2px 6px", fontSize: 11, lineHeight: 1.4,
+                        color: isManuallyHidden ? C.text : C.dim,
+                        fontFamily: FONT_BODY,
+                        transition: "background 0.15s, color 0.15s",
+                      }}
+                    >{isManuallyHidden ? "show" : "hide"}</button>
                   </div>
                 </div>
               );
